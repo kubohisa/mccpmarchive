@@ -1,0 +1,89 @@
+;===============================================
+;	<< Mini Compiler Ver1.3 >>
+;	RUN-TIME & FUNCTION TABLE for CP/M
+;===============================================
+;-----------------------
+;	WORK AREA
+;-----------------------
+RNDSEE:	DW	1992
+	DW	0C204H
+
+TXTBUF:	DB	255, 0
+WORK:	DS	255
+CONF:	DS	1
+
+;===============================
+;    OBJECT START ADDRESS
+;===============================
+START:
+
+;===============================
+;    RUN TIME TABLE
+;===============================
+	DW	$MCLT
+	DW	$MCGE
+	DW	$MCEQ
+	DW	$MCNE
+	DW	$MCNOT
+	DW	$MCNEG
+	DW	$MCMULT
+	DW	$MCDIVI
+	DW	$MCSFTR
+	DW	$MCSFTL
+	DW	$MCANDB
+	DW	$MCAND
+	DW	$MCXOR
+	DW	$MCORB
+	DW	$MCOR
+	DW	$MCSTOR
+	DW	$MCCALL
+	DW	$MCINIT
+
+;===============================
+;    FUNCTION TABLE
+;===============================
+	DB	'GETCHR',0, 0
+	DW	_GETCHR
+
+	DB	'PUTCHR',0, 1
+	DW	_PUTCHR
+
+	DB	'PRINTF',0, 15
+	DW	_PRINTF
+
+	DB	'SPRINTF',0, 15
+	DW	_SPRINF
+
+	DB	'SCANF',0, 15
+	DW	_SCANF
+
+	DB	'SSCANF',0, 15
+	DW	_SSCANF
+
+	DB	'INKEY',0, 0
+	DW	_INKEY
+
+	DB	'BDOS',0, 2
+	DW	_BDOS
+
+	DB	'STRLEN',0, 1
+	DW	_STRLEN
+
+	DB	'STRCPY',0, 2
+	DW	_STRCPY
+
+	DB	'STRCAT',0, 2
+	DW	_STRCAT
+
+	DB	'MEMSET',0, 3
+	DW	_MEMSET
+
+	DB	'MEMCPY',0, 3
+	DW	_MEMCPY
+
+	DB	'MEMCMP',0, 3
+	DW	_MEMCMP
+
+	DB	'RND',0, 1
+	DW	_RND
+

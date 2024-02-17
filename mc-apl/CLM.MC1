@@ -1,0 +1,457 @@
+;-------------------------------
+;	COLUMNS
+;-------------------------------
+ON     equ 1
+OFF    equ 0
+LINL32 equ $F3AF
+SCRMOD equ $FCAF
+CSRSW  equ $FCA9
+T32NAM equ $1800
+T32COL equ $2000
+T32CGP equ $0000
+T32ATR equ $1B00
+T32PAT equ $3800
+
+;-------------------------------
+;	MAIN
+;-------------------------------
+MAIN:
+	dim  Board(107), Block1(2), Block2(2)
+
+	gosub INITIAL
+
+	while GameFlag
+		gosub DISPLAY_TITLE
+		if GameFlag then gosub GAME endif
+	wend
+
+	gosub RESET_SCREEN
+end
+
+;-------------------------------
+;	GAME
+;-------------------------------
+GAME:
+	gosub SET_SCREEN
+	Score = 0
+	Level = 0
+	WaitCount  = 3000
+	LevelCount = 50
+	EndFlag = OFF
+	memset( &Board, 0, 108*2 )
+	gosub CREATE_BLOCK
+
+	while !EndFlag
+		gosub DISPLAY_SCORE
+		BLX = 2: BLY = 0
+		for i=0 to ++i>2
+			Block1(i) = Block2(i)
+		next
+		gosub DISPLAY_BLOCK
+		if Board(2) || Board(8) || Board(14) then
+			EndFlag = ON
+		else
+			gosub MOVE_BLOCK
+			if WaitCount > 6 then
+				WaitCount = WaitCount - 6
+			endif
+			if --LevelCount == 0 then
+				++Level
+				LevelCount = 50
+			endif
+		endif
+	wend
+	gosub GAME_OVER
+return
+
+;-------------------------------
+;	MOVE BLOCK
+;-------------------------------
+MOVE_BLOCK:
+	gosub CREATE_BLOCK
+	gosub NEXT_BLOCK
+	count = WaitCount
+	DropFlag = OFF
+	repeat
+		select inkey()
+			case $1D: GOSUB MOVE_LEFT
+			case $1C: GOSUB MOVE_RIGHT
+			case $1F: GOSUB ROTATE
+			case ' ': GOSUB DROP_BLOCK
+			case 'q': EndFlag = ON
+			case 'Q': EndFlag = ON
+			case 'p': GETCHR()
+			case 'P': GETCHR()
+		endsel
+
+		if --count==0 then
+			gosub MOVE_DOWN
+			count = WaitCount
+		endif
+
+	until EndFlag || DropFlag
+
+	if DropFlag then
+		p = BLY * 6 + BLX
+		for i=0 to ++i>2
+			Board(p) = Block1(i)
+			p = p + 6
+		next
+
+		NextCount = 0
+		repeat
+			NextCount = NextCount + Level + 1
+			gosub CHECK_LINE
+			if EraseFlag then
+				gosub DELETE_LINE
+				gosub RESET_BLOCK
+			endif
+		until !EraseFlag
+	endif
+return
+
+;-------------------------------
+;	CREAT BLOCK
+;-------------------------------
+CREATE_BLOCK:
+	if Level > 5 then r = 7 else r = 6 endif
+	for i=0 to ++i>2
+		Block2(i) = rnd(r) * 8 + $C8
+	next
+return
+
+;-------------------------------
+;	MOVE LEFT
+;-------------------------------
+MOVE_LEFT:
+	p = BLY * 6 + BLX
+	if BLX && !Board(p-1) && !Board(p+5) && !Board(p+11) then
+		gosub ERASE_BLOCK
+		--BLX
+		gosub DISPLAY_BLOCK
+	endif
+return
+
+;-------------------------------
+;	MOVE RIGHT
+;-------------------------------
+MOVE_RIGHT:
+	p = BLY * 6 + BLX
+	if BLX<5 && !Board(p+1) && !Board(p+7) && !Board(p+13) then
+		gosub ERASE_BLOCK
+		++BLX
+		gosub DISPLAY_BLOCK
+	endif
+return
+
+;-------------------------------
+;	ROTATE
+;-------------------------------
+ROTATE:
+	block     = Block1(0)
+	Block1(0) = Block1(1)
+	Block1(1) = Block1(2)
+	Block1(2) = block
+	gosub DISPLAY_BLOCK
+return
+
+;-------------------------------
+;	MOVE DOWN
+;-------------------------------
+MOVE_DOWN:
+	p = BLY * 6 + BLX + 18
+	if !Board(p) then
+		gosub ERASE_BLOCK
+		++BLY
+		gosub DISPLAY_BLOCK
+	else
+		DropFlag = ON
+	endif
+return
+
+;-------------------------------
+;	DROP BLOCK
+;-------------------------------
+DROP_BLOCK:
+	gosub ERASE_BLOCK
+	p = BLY * 6 + BLX + 18
+	while !Board(p) && p<108
+		++BLY
+		p = p + 6
+	wend
+	gosub DISPLAY_BLOCK
+	DropFlag = ON
+return
+
+;-------------------------------
+;	ERASE BLOCK
+;-------------------------------
+ERASE_BLOCK:
+	for i=0 to ++i>2
+		locate( BLX+14, BLY+i+4 )
+		putchr( ' ' )
+	next
+return
+
+;-------------------------------
+;	DISPLAY BLOCK
+;-------------------------------
+DISPLAY_BLOCK:
+	for i=0 to ++i>2
+		locate( BLX+14, BLY+i+4 )
+		putchr( Block1(i) )
+	next
+return
+
+;-------------------------------
+;	DISPLAY NEXT BLOCK
+;-------------------------------
+NEXT_BLOCK:
+	for i=0 to ++i>2
+		locate( 27, i+6 )
+		putchr( Block2(i) )
+	next
+return
+
+;-------------------------------
+;	CHECK BLOCK LINE
+;-------------------------------
+CHECK_LINE:
+	EraseFlag = OFF
+	for i=0 to ++i>107
+		if Board(i) then
+			cd1 = Board(i) & $fe
+			for j=0 to ++j>3
+				p = i
+				x = i % 6
+				count = 0
+				repeat
+					x = x + XTBL(j)
+					p = p + CKTBL(j)
+					cd2 = Board(p) & $fe
+					++count
+				until x<0 || x>5 || cd2!=cd1 || p>107
+				if count > 2 then
+					Score = Score + NextCount * count
+					EraseFlag = ON
+					p = i
+					cd2 = cd1 + 1
+					for k=1 to ++k>count
+						Board(p) = cd2
+						p = p + CKTBL(j)
+					next
+				endif
+			next
+		endif
+	next
+return
+
+;-------------------------------
+;	DELETE LINE
+;-------------------------------
+DELETE_LINE:
+	for l=0 to ++l>4
+		for j=p=0 to ++j>17
+			for i=0 to ++i>5
+				dt = Board(p)
+				if dt & 1 then
+					dt = dt & $fe
+					locate( i+14, j+4 )
+					if l & 1 then putchr( dt )
+					else          putchr( ' ' )
+					endif
+				endif
+				++p
+			next
+		next
+		gosub WAIT
+	next
+return
+
+;-------------------------------
+;	RESET BLOCK
+;-------------------------------
+RESET_BLOCK:
+	for y=0 to ++y>17
+		for x=0 to ++x>5
+			p = y * 6 + x
+			if Board(p) & 1 then
+				for i=y to --i<1
+					dt = Board(p-6)
+					Board(p) = dt
+					p = p - 6 ;
+					locate( x+14, i+3 )
+					putchr( ' ' )
+					if dt && !(dt & 1) then
+						locate( x+14, i+4 )
+						putchr( dt )
+					endif
+				next
+				Board(p) = 0
+			endif
+		next
+	next
+return
+
+;-------------------------------
+;	WAIT
+;-------------------------------
+WAIT:
+	for w=0 to ++w>255
+		w = w
+	next
+return
+
+;-------------------------------
+;	INITIALIZE
+;-------------------------------
+INITIAL:
+	Scrno   = *SCRMOD
+	Linlen  = *LINL32
+	*CSRSW  = 0
+	*LINL32 = 32
+	screen( 1, 0, 0 )
+	color( 15, 0, 0 )
+	cls()
+	gosub SET_FONT
+	HiScore  = 0
+	GameFlag = ON
+return
+
+;-------------------------------
+;	RESET SCREEN
+;-------------------------------
+RESET_SCREEN:
+	*LINL32 = Linlen
+	screen( Scrno, 0, 0 )
+	*CSRSW  = 1
+	cls()
+return
+
+;-------------------------------
+;	DISPLAY TITLE
+;-------------------------------
+DISPLAY_TITLE:
+	cls()
+	locate(3, 4 ): printf( "ÀÀÀ ÀÀÀ À   À À À À À À ÀÀÀ" )
+	locate(3, 5 ): printf( "À   À À À   À À ÀÀÀ ÀÀÀ À  " )
+	locate(3, 6 ): printf( "À   À À À   À À À À ÀÀÀ ÀÀÀ" )
+	locate(3, 7 ): printf( "À   À À À   À À À À ÀÀÀ   À" )
+	locate(3, 8 ): printf( "ÀÀÀ ÀÀÀ ÀÀÀ ÀÀÀ À À À À ÀÀÀ" )
+	locate(12,15): printf( "GAME START" )
+	LOCATE(14,17): PRINTF( "(Y/N)" )
+	rndsee = -1
+	repeat
+		key = inkey()
+		if --rndsee >=0 then
+			rndsee = -1
+		endif
+	until key=='y' || key=='n'
+
+	if key=='n' then
+		GameFlag = OFF
+	else
+		rnd(rndsee)
+	endif
+RETURN
+
+;-------------------------------
+;	SET SCREEN
+;-------------------------------
+SET_SCREEN:
+	cls()
+	X1=13: Y1=3 : X2=20: Y2=22: CD=$C1: gosub DISPLAY_BOX
+	X1=2 : Y1=4 : X2=11: Y2=16: CD=$81: gosub DISPLAY_BOX
+	X1=23: Y1=4 : X2=31: Y2=10: CD=$80: gosub DISPLAY_BOX
+	X1=23: Y1=12: X2=31: Y2=22: CD=$83: gosub DISPLAY_BOX
+	locate(3, 6 ): printf( "COLUMNS" )
+	locate(3, 8 ): printf( "SCORE"   )
+	locate(3, 12): printf( "HISCORE" )
+	locate(4, 14): printf( "%d", HiScore   )
+	locate(25,14): printf( "LEVEL"   )
+	locate(25,18): printf( "COUNT"   )
+return
+
+;-------------------------------
+;	DISPLAY SCORE
+;-------------------------------
+DISPLAY_SCORE:
+	locate(4,10) :printf( "%d", Score )
+	locate(27,16):printf( "%d", Level )
+	locate(27,20):printf( "%d", LevelCount )
+return
+
+;-------------------------------
+;	GAME OVER
+;-------------------------------
+GAME_OVER:
+	if Score > HiScore then
+		HiScore = Score
+	endif
+	X1=10: Y1=11: X2=22: Y2=17: CD=$c0: gosub DISPLAY_BOX
+	locate(11,12): printf( "           " )
+	locate(11,13): printf( " GAME OVER " )
+	locate(11,14): printf( "           " )
+	locate(11,15): printf( " PUSH KEY! " )
+	locate(11,16): printf( "           " )
+	locate(20,15)
+	repeat
+		key= inkey()
+	until key!=0
+return
+
+;-------------------------------
+;	DISPLAY BOX
+;-------------------------------
+DISPLAY_BOX:
+	for i=X1 to ++i>X2
+		locate( i, Y1 ): putchr( CD )
+		locate( i, Y2 ): putchr( CD )
+	next
+	for i=Y1 to ++i>Y2
+		locate( X1, i ): putchr( CD )
+		locate( X2, i ): putchr( CD )
+	next
+return
+
+;-------------------------------
+;	SET CHARCTER FONT
+;-------------------------------
+SET_FONT:
+	for i=p=0 to ++i>8
+		vpoke( FONT(p)/8+T32COL, FONT(p+1) )
+		adr = FONT(p) * 8 + T32CGP: p = p + 2
+		for j=0 to ++j>7
+			vpoke( adr++, FONT(p++) )
+		next
+	next
+
+	for i=5 to ++i>11
+		vpoke( T32COL+i, $b0 )
+	next
+	vpoke( T32COL+16, $30 )
+
+	adr = 32 * 8
+	for i=32 to ++i>90
+		for j=0 to ++j>7
+			cd = (vpeek(adr) >> 1) | (vpeek(adr) >> 2)
+			vpoke( adr++, cd )
+		next
+	next
+return
+
+;-------------------------------
+;	TABLE DATA SET
+;-------------------------------
+CKTBL:  data 1, 5, 6, 7
+XTBL:   data 1, -1, 0, 1
+FONT:   data $C0, $40, $FF, $FF, $FF, $FF, $FF, $FF, $FF, $FF
+        data $C1, $40, $7F, $7F, $7F, $7F, $7F, $7F, $7F, $00
+        data $C8, $30, $7F, $63, $6B, $6B, $6B, $63, $7F, $00
+        data $D0, $60, $7F, $77, $77, $77, $77, $77, $7F, $00
+        data $D8, $70, $7F, $63, $7B, $63, $6F, $63, $7F, $00
+        data $E0, $90, $7F, $63, $7B, $73, $7B, $63, $7F, $00
+        data $E8, $A0, $7F, $6B, $6B, $63, $7B, $7B, $7F, $00
+        data $F0, $C0, $7F, $63, $6F, $63, $7B, $63, $7F, $00
+        data $F8, $E0, $7F, $63, $6F, $63, $6B, $63, $7F, $00
+

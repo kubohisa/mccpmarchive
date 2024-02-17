@@ -1,0 +1,89 @@
+;=======================
+;
+;	ROM GAME LOADER
+;
+;=======================
+PARAM   EQU $80
+TYPE    EQU $5d
+FCB     EQU $6c
+FOPEN   EQU 15
+FCLOSE  EQU 16
+FDEL    EQU 19
+FREAD   EQU 20
+FWRITE  EQU 21
+FCREATE EQU 22
+SETDMA  EQU 26
+FERR    EQU 255
+
+;=======================
+;
+;	Main
+;
+;=======================
+MAIN:
+	if ! *PARAM then
+		goto USAGE
+	endif
+
+	if bdos(FOPEN, FCB)==FERR then
+		printf( "Can't open file.\n" )
+		stop
+	endif
+
+	*(FCB+32)=0
+
+	if *TYPE == '0' then
+		adr = $4000
+		LoopEnd = 256
+		gosub SETROM
+		memcpy(&START+1, $4002, 2)
+		goto START
+
+	elseif *TYPE == '1' then
+		adr = $8000
+		LoopEnd = 128
+		gosub SETROM
+		memcpy(&START+1, $8002, 2)
+		goto START
+
+	elseif *TYPE == '2' then
+		adr = $4000
+		LoopEnd = 64
+		gosub SETROM
+		adr = $8000
+		gosub SETROM
+		memcpy(&START+1, $4002, 2)
+		goto START
+	else
+		goto USAGE
+	endif
+end
+
+;-----------------------
+;	Read ROM File
+;-----------------------
+SETROM:
+	for i=1 to ++i>LoopEnd
+		BDOS(SETDMA, adr)
+		if BDOS(FREAD, FCB) then break endif
+		adr = adr + 128
+	next
+return
+
+;-----------------------
+;	Put Usage
+;-----------------------
+USAGE:
+	printf("Usage : rom type file\n")
+	printf(" type=0 : 4000-9FFF or 4000-BFFF\n")
+	printf(" type=1 : 8000-BFFF\n")
+	printf(" type=2 : 4000-5FFF and 8000-9FFF\n")
+	stop
+
+START:
+	screen(1,0,0)
+	code $21, $00, $00 ;LD   HL,rom-start
+	code $e5           ;PUSH HL
+	code $3a, $c1, $fc ;LD   A,(FCC1)
+	code $26, $00      ;LD   H,00
+	code $c3, $24, $00 ;JP   0024

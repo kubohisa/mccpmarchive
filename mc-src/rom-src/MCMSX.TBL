@@ -1,0 +1,49 @@
+;===========================================
+;  << Mini Compiler Ver1.3 >>
+;    RUN-TIME & FUNCTION TABLE for MSX1
+;===========================================
+	DB	'LOCATE',0, 2
+	DW	_LOCATE
+
+	DB	'SCREEN',0, 3
+	DW	_SCREEN
+
+	DB	'COLOR',0, 3
+	DW	_COLOR
+
+	DB	'VPEEK',0, 1
+	DW	_VPEEK
+
+	DB	'VPOKE',0, 2
+	DW	_VPOKE
+
+	DB	'VREAD',0, 3
+	DW	_VREAD
+
+	DB	'VWRITE',0, 3
+	DW	_VWRITE
+
+	DB	'SPRITE',0, 2
+	DW	_SPRITE
+
+	DB	'PUTSPR',0, 5
+	DW	_PUTSPR
+
+	DB	'STICK',0, 1
+	DW	_STICK
+
+	DB	'STRIG',0, 1
+	DW	_STRIG
+
+	DB	'KEYSNS',0, 1
+	DW	_KEYSNS
+
+	DB	'KILBUF',0, 0
+	DW	_KILBUF
+
+	DB	'PSGINI',0, 0
+	DW	_PSGINI
+
+	DB	'SOUND',0, 2
+	DW	_SOUND
+

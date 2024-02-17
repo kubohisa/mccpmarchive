@@ -1,0 +1,411 @@
+;-------------------------------
+;	COLUMNS
+;-------------------------------
+OFF   equ 0
+ON    equ 1
+WCONT equ 30000
+
+;-------------------------------
+;	MAIN
+;-------------------------------
+MAIN:
+	dim  Board(107), Block1(2), Block2(2)
+	gosub INITIAL
+
+	while GameFlag
+		gosub DISPLAY_TITLE
+		if GameFlag then gosub GAME endif
+	wend
+end
+
+;-------------------------------
+;	GAME
+;-------------------------------
+GAME:
+	gosub SET_SCREEN
+	Score = 0
+	Level = 0
+	WaitCount  = 300
+	LevelCount = 50
+	EndFlag = OFF
+	memset( &Board, 0, 108*2 )
+	gosub CREATE_BLOCK
+
+	while !EndFlag
+		gosub DISPLAY_SCORE
+		BLX = 2: BLY = 0
+		for i=0 to ++i>2
+			Block1(i) = Block2(i)
+		next
+		gosub DISPLAY_BLOCK
+		if Board(2) || Board(8) || Board(14) then
+			EndFlag = ON
+		else
+			gosub MOVE_BLOCK
+			if WaitCount > 6 then
+				WaitCount = WaitCount - 6
+			endif
+			if --LevelCount == 0 then
+				++Level
+				LevelCount = 50
+			endif
+		endif
+	wend
+	gosub GAME_OVER
+return
+
+;-------------------------------
+;	MOVE BLOCK
+;	UP		05h (^E)
+;	DOWN	18h (^X)
+;	LEFT	13h (^S)
+;	RIGHT	04h (^D)
+;-------------------------------
+MOVE_BLOCK:
+	gosub CREATE_BLOCK
+	gosub NEXT_BLOCK
+	count = WaitCount
+	DropFlag = OFF
+	repeat
+		gosub WAIT
+		key = inkey()
+		select key
+			case $13: gosub MOVE_LEFT
+			case $04: gosub MOVE_RIGHT
+			case $18: gosub ROTATE
+			case ' ': gosub DROP_BLOCK
+			case 'q': EndFlag = ON
+			case 'Q': EndFlag = ON
+			case 'p': GETCHR()
+			case 'P': GETCHR()
+		endsel
+
+		if --count==0 then
+			gosub MOVE_DOWN
+			count = WaitCount
+		endif
+
+	until EndFlag || DropFlag
+
+	if DropFlag then
+		p = BLY * 6 + BLX
+		for i=0 to ++i>2
+			Board(p) = Block1(i)
+			p = p + 6
+		next
+
+		NextCount = 0
+		repeat
+			NextCount = NextCount + Level + 1
+			gosub CHECK_LINE
+			if EraseFlag then
+				gosub DELETE_LINE
+				gosub RESET_BLOCK
+			endif
+		until !EraseFlag
+	endif
+return
+
+;-------------------------------
+;	CREAT BLOCK
+;-------------------------------
+CREATE_BLOCK:
+	if Level > 5 then r = 7 else r = 6 endif
+	for i=0 to ++i>2
+		Block2(i) = rnd(r)*2 + 'B'
+	next
+return
+
+;-------------------------------
+;	MOVE LEFT
+;-------------------------------
+MOVE_LEFT:
+	p = BLY * 6 + BLX
+	if BLX && !Board(p-1) && !Board(p+5) && !Board(p+11) then
+		gosub ERASE_BLOCK
+		--BLX
+		gosub DISPLAY_BLOCK
+	endif
+return
+
+;-------------------------------
+;	MOVE RIGHT
+;-------------------------------
+MOVE_RIGHT:
+	p = BLY * 6 + BLX
+	if BLX<5 && !Board(p+1) && !Board(p+7) && !Board(p+13) then
+		gosub ERASE_BLOCK
+		++BLX
+		gosub DISPLAY_BLOCK
+	endif
+return
+
+;-------------------------------
+;	ROTATE
+;-------------------------------
+ROTATE:
+	block     = Block1(0)
+	Block1(0) = Block1(1)
+	Block1(1) = Block1(2)
+	Block1(2) = block
+	gosub DISPLAY_BLOCK
+return
+
+;-------------------------------
+;	MOVE DOWN
+;-------------------------------
+MOVE_DOWN:
+	p = BLY * 6 + BLX + 18
+	if !Board(p) then
+		gosub ERASE_BLOCK
+		++BLY
+		gosub DISPLAY_BLOCK
+	else
+		DropFlag = ON
+	endif
+return
+
+;-------------------------------
+;	DROP BLOCK
+;-------------------------------
+DROP_BLOCK:
+	gosub ERASE_BLOCK
+	p = BLY * 6 + BLX + 18
+	while !Board(p) && p<108
+		++BLY
+		p = p + 6
+	wend
+	gosub DISPLAY_BLOCK
+	DropFlag = ON
+return
+
+;-------------------------------
+;	ERASE BLOCK
+;-------------------------------
+ERASE_BLOCK:
+	for i=0 to ++i>2
+		locate(BLX+14, BLY+i+4)
+		putchr( ' ' )
+	next
+return
+
+;-------------------------------
+;	DISPLAY BLOCK
+;-------------------------------
+DISPLAY_BLOCK:
+	for i=0 to ++i>2
+		locate(BLX+14,Y=BLY+i+4)
+		printf("%c[41m%c%c[m", $1b, Block1(i), $1b)
+		;putchr( Block1(i) )
+	next
+return
+
+;-------------------------------
+;	DISPLAY NEXT BLOCK
+;-------------------------------
+NEXT_BLOCK:
+	for i=0 to ++i>2
+		locate(27,i+6)
+		printf("%c[41m%c%c[m", $1b, Block2(i), $1b)
+		;putchr( Block2(i) )
+	next
+return
+
+;-------------------------------
+;	CHECK BLOCK LINE
+;-------------------------------
+CHECK_LINE:
+	EraseFlag = OFF
+	for i=0 to ++i>107
+		if Board(i) then
+			cd1 = Board(i) & $fe
+			for j=0 to ++j>3
+				p = i
+				x = i % 6
+				count = 0
+				repeat
+					x = x + XTBL(j)			;1,-1, 0, 1
+					p = p + CKTBL(j)		;1, 5, 6, 7
+					cd2 = Board(p) & $fe
+					++count
+				until x<0 || x>5 || cd2!=cd1 || p>107
+				if count > 2 then
+					Score = Score + NextCount * count
+					EraseFlag = ON
+					p = i
+					cd2 = cd1 + 1
+					for k=0 to ++k>=count
+						Board(p) = cd2
+						p = p + CKTBL(j)
+					next
+				endif
+			next
+		endif
+	next
+return
+
+;-------------------------------
+;	DELETE LINE
+;-------------------------------
+DELETE_LINE:
+	for l=0 to ++l>4
+		for j=p=0 to ++j>17
+			for i=0 to ++i>5
+				dt = Board(p)
+				if dt & 1 then
+					dt = dt & $fe
+					locate(i+14,j+4)
+					if l & 1 then printf("%c[41m%c%c[m", $1b, dt, $1b);putchr( dt )
+					else putchr( ' ' )
+					endif
+				endif
+				++p
+			next
+		next
+		for i=0 to ++i>50
+			for j=0 to ++j>30000
+				gosub WAIT
+			next
+		next
+	next
+return
+
+;-------------------------------
+;	RESET BLOCK
+;-------------------------------
+RESET_BLOCK:
+	for y=0 to ++y>17
+		for x=0 to ++x>5
+			p = y * 6 + x
+			if Board(p) & 1 then
+				for i=y to --i<=0
+					dt = Board(p-6)
+					Board(p) = dt
+					p = p - 6 ;
+					locate(x+14,i+3)
+					putchr( ' ' )
+					if dt && !(dt & 1) then
+						locate(x+14,Y=i+4)
+						printf("%c[41m%c%c[m", $1b, dt, $1b)
+						;putchr( dt )
+					endif
+				next
+				Board(p) = 0
+			endif
+		next
+	next
+return
+
+;-------------------------------
+;	WAIT
+;-------------------------------
+WAIT:
+return
+	for w=0 to ++w>WCONT
+		for ww=0 to ++ww>WCONT
+			inkey()
+		next
+	next
+return
+
+;-------------------------------
+;	INITIALIZE
+;-------------------------------
+INITIAL:
+	cls()
+	HiScore  = 0
+	GameFlag = ON
+return
+
+;-------------------------------
+;	DISPLAY TITLE
+;-------------------------------
+DISPLAY_TITLE:
+	cls()
+	locate(3, Y=4 ): printf( "OOO OOO O   O O O O O O OOO" )
+	locate(3, Y=5 ): printf( "O   O O O   O O OOO OOO O  " )
+	locate(3, Y=6 ): printf( "O   O O O   O O O O OOO OOO" )
+	locate(3, Y=7 ): printf( "O   O O O   O O O O OOO   O" )
+	locate(3, Y=8 ): printf( "OOO OOO OOO OOO O O O O OOO" )
+	locate(12,Y=15): printf( "GAME START" )
+	locate(14,Y=17): printf( "PUSH y/n => " )
+	rndsee = -1
+	repeat
+		key = inkey()
+		if --rndsee >=0 then
+			rndsee = -1
+		endif
+	until key=='y' || key=='n'
+
+	if key=='n' then
+		GameFlag = OFF
+	else
+		rnd(rndsee)
+	endif
+RETURN
+
+;-------------------------------
+;	SET SCREEN
+;-------------------------------
+SET_SCREEN:
+	cls()
+	X1=13: Y1=3 : X2=20: Y2=22: CD='*': gosub DISPLAY_BOX
+	X1=2 : Y1=4 : X2=11: Y2=16: CD='*': gosub DISPLAY_BOX
+	X1=23: Y1=4 : X2=31: Y2=10: CD='*': gosub DISPLAY_BOX
+	X1=23: Y1=12: X2=31: Y2=22: CD='*': gosub DISPLAY_BOX
+	locate(3, 6 ): printf( "COLUMNS" )
+	locate(3, 8 ): printf( "SCORE"   )
+	locate(3, 12): printf( "HISCORE" )
+	locate(4, 14): printf( "%d", HiScore   )
+	locate(25,14): printf( "LEVEL"   )
+	locate(25,18): printf( "COUNT"   )
+return
+
+;-------------------------------
+;	DISPLAY SCORE
+;-------------------------------
+DISPLAY_SCORE:
+	locate(4, 10): printf( "%d", Score )
+	locate(27,16): printf( "%d", Level )
+	locate(27,20): printf( "%d", LevelCount )
+return
+
+;-------------------------------
+;	GAME OVER
+;-------------------------------
+GAME_OVER:
+	if Score > HiScore then
+		HiScore = Score
+	endif
+	X1=10: Y1=11: X2=22: Y2=17: CD='+': gosub DISPLAY_BOX
+	locate(11,12): printf( "           " )
+	locate(11,13): printf( " GAME OVER " )
+	locate(11,14): printf( "           " )
+	locate(11,15): printf( " PUSH KEY! " )
+	locate(11,16): printf( "           " )
+	locate(20,15)
+	repeat
+		key= inkey()
+	until key!=0
+return
+
+;-------------------------------
+;	DISPLAY BOX
+;-------------------------------
+DISPLAY_BOX:
+	for x=X1 to ++x>X2
+		locate(x,Y1): printf("%c[44m%c%c[m", $1b, CD, $1b)
+		locate(x,Y2): printf("%c[44m%c%c[m", $1b, CD, $1b)
+	next
+	for y=Y1 to ++y>Y2
+		locate(X1,y): printf("%c[44m%c%c[m", $1b, CD, $1b)
+		locate(X2,y): printf("%c[44m%c%c[m", $1b, CD, $1b)
+	next
+return
+
+;-------------------------------
+;	TABLE DATA SET
+;-------------------------------
+CKTBL:  data 1, 5, 6, 7
+XTBL:   data 1, -1, 0, 1
+

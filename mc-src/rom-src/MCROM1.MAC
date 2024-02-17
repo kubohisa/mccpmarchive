@@ -1,0 +1,52 @@
+;=======================================
+;  << Mini Compiler Ver1.0 >>
+;    RUN-TIME & FUNCTION for MSX1
+;=======================================
+;-------------------------------
+;    Header for CP/M,MSX
+;-------------------------------
+INCLUDE MCMSX.HED
+
+RDVRM	EQU	004AH			;READ  VRAM(MSX1)
+WRTVRM	EQU	004DH			;WRITE VRAM(MSX1)
+
+;-------------------------------
+;    Function for MSX
+;-------------------------------
+INCLUDE MCCOM.FNC
+INCLUDE MCMSX.FNC
+
+;-------------------------------
+;    MC-Initialize
+;-------------------------------
+$MCINIT:
+	LD	HL,1992
+	LD	(RNDSEE),HL
+	LD	HL,0C204H
+	LD	(RNDSEE+2),HL
+	RET
+
+;-----------------------
+;    CLS()
+;-----------------------
+_CLS:
+	XOR	A
+	LD	IX,CLS
+CALROM:	LD	IY,(EXPTBL-1)
+	CALL	CALSLT
+	EI
+	RET
+
+;-------------------------------
+;	Table for CP/M,MSX
+;-------------------------------
+INCLUDE MCCOM.TBL
+INCLUDE MCMSX.TBL
+
+	DB	'CLS',0, 0
+	DW	_CLS
+
+	DB	0		;TABLE END CODE
+
+INCLUDE MCCOM.WRK
+

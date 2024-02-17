@@ -1,0 +1,65 @@
+;=======================================
+;  << Mini Compiler Ver1.3 >>
+;    RUN-TIME & FUNCTION for CP/M
+;=======================================
+BDOS	EQU	0005H
+
+;-----------------------
+;  Function for CP/M
+;-----------------------
+INCLUDE	MCCPM.FNC
+
+;-----------------------
+;  MC-Initialize
+;-----------------------
+$MCINIT:
+	RET
+
+;-----------------------
+;  CLS()
+;  ESC [ 2 J
+;-----------------------
+_CLS:
+	POP	BC
+	LD	HL,1BH
+	PUSH	HL
+	LD	HL,CLSDEF
+	PUSH	HL
+	PUSH	BC
+	JP	_PRINTF
+CLSDEF:	DB	'%','c','[','2','J',0
+
+;-----------------------
+;  LOCATE( X, Y )
+;  ESC [ Y ; X  H
+;-----------------------
+_LOCATE:
+	POP	BC		;RETURN ADDRESS
+	POP	DE		;X
+	INC	DE
+	POP	HL		;Y
+	INC	HL
+	PUSH	DE
+	PUSH	HL
+	LD	HL,1BH
+	PUSH	HL
+	LD	HL,LOCDEF
+	PUSH	HL
+	PUSH	BC
+	JP	_PRINTF
+LOCDEF:	DB	'%','c','[','%','d',';','%','d','H',0
+
+;-----------------------
+;  Table for CP/M
+;-----------------------
+INCLUDE MCCPM.TBL
+	DB	'CLS',0, 0
+	DW	_CLS
+
+	DB	'LOCATE',0, 2
+	DW	_LOCATE
+
+	DB	0		;TABLE END CODE
+
+	END	START
+

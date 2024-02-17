@@ -1,0 +1,1888 @@
+;-------------------------------------------
+;	Mini Compiler Ver 1.0
+;	Usage:mc run-time src-file [-m|p|r]
+;-------------------------------------------
+;--------------------------------------
+;   BDOS DEFINE
+;--------------------------------------
+PRGTOP  equ $100
+ROMTOP  equ $4000
+ROMWRK  equ $C200
+FOPEN   equ 15
+FCLOSE  equ 16
+FDEL    equ 19
+FREAD   equ 20
+FWRITE  equ 21
+FCREATE equ 22
+SETDMA  equ 26
+FNAME1  equ $5c
+FNAME2  equ $6c
+DMAADR  equ $80
+PRMCNT  equ $80
+PRMADR  equ $81
+FERROR  equ 255
+RECLEN  equ 128
+
+;--------------------------------------
+;   LABEL DEFINE
+;--------------------------------------
+LBLDEF  equ -1
+LBLEQU  equ -2
+LBLNDF  equ -3
+
+;--------------------------------------
+;   KEY CODE DEFINE
+;--------------------------------------
+TABCD   equ $09
+EOFCD   equ $1a
+DQUTE   equ $22
+HEXCD   equ $24
+SQUTE   equ $27
+SEPCD   equ $3a
+CMTCD   equ $3b
+YENCD   equ $5c
+
+;--------------------------------------
+;   TOKEN CODE
+;--------------------------------------
+TKNCOD  equ $7000
+CTRTKN  equ $7000
+REGHL   equ $6000
+REGHL1  equ $6100
+REGHL2  equ $6200
+PUSHL1  equ $6300
+PUSHL2  equ $6400
+PUSHL3  equ $6500
+VARTKN  equ $5000
+STRTKN  equ $4000
+NUMTKN  equ $3000
+FNCTKN  equ $2000
+ARYTKN  equ $1000
+T_LEFT  equ $c1
+T_RIGHT equ $c0
+T_CNM   equ $b8
+T_MEM   equ $b7
+T_NEG   equ $b6
+T_NOT   equ $b5
+T_ADR   equ $b4
+T_DECA  equ $b3
+T_DECB  equ $b2
+T_INCA  equ $b1
+T_INCB  equ $b0
+T_MOD   equ $a2
+T_DIVI  equ $a1
+T_MULT  equ $a0
+T_SUB   equ $91
+T_ADD   equ $90
+T_RSFT  equ $81
+T_LSFT  equ $80
+T_GE    equ $73
+T_LE    equ $72
+T_GT    equ $71
+T_LT    equ $70
+T_NE    equ $61
+T_EQ    equ $60
+T_AND   equ $50
+T_XOR   equ $40
+T_OR    equ $30
+T_ANDB  equ $20
+T_ORB   equ $10
+T_EQU   equ $01
+
+;--------------------------------------
+;	RUN TIME TABLE NO
+;--------------------------------------
+MCLT    equ 0
+MCGE    equ 1
+MCEQ    equ 2
+MCNE    equ 3
+MCNOT   equ 4
+MCNEG   equ 5
+MCMULT  equ 6
+MCDIVI  equ 7
+MCSFTR  equ 8
+MCSFTL  equ 9
+MCANDB  equ 10
+MCAND   equ 11
+MCXOR   equ 12
+MCORB   equ 13
+MCOR    equ 14
+MCSTOR  equ 15
+MCCALL  equ 16
+MCINIT  equ 17
+
+;--------------------------------------
+;	Table Define
+;--------------------------------------
+dim SblTbl(1000), AdrTbl(256), SblInf(256), RunTbl(18)
+dim TxtBuf(128),  NumTbl(256), CtrTbl(256), FncTbl(256)
+dim TknTbl(256),  StkTbl(256), TreTbl(256)
+dim SmlSbl(20),   LagSbl(20)
+dim RunFcb(18),   TxtFcb(18),  ComFcb(18)
+dim Fname(15)
+
+;--------------------------------------
+;  Main
+;--------------------------------------
+MAIN:
+	printf("*** Mini Compiler (Ver 1.0) ***\n")
+
+	gosub INIT
+
+	;-- Open Text File --
+	if bdos(FOPEN, &TxtFcb)==FERROR then ErrCod=61: goto ERROR endif
+	Dma=DMAADR :Dmp=RECLEN: bdos(SETDMA, Dma)
+
+	;-- ComPile --
+	TxtNo = 0
+	while ++TxtNo
+		gosub FGETS: if FilEnd then break endif
+		if PrtFlg then
+			printf("%x-%d: %s\n", (Pad-Off), TxtNo, &TxtBuf)
+		endif
+		gosub COMPILE
+	wend
+	bdos(FCLOSE, &TxtFcb)
+
+	gosub PUT_OBJ
+
+	if MapFlg then gosub PUT_MAP endif
+	printf("Compile complete.\n")
+end
+
+;-------------------------------------
+;    Initialize
+;-------------------------------------
+INIT:
+	;-- Initial Value --
+	Ctp=0: SblTbl(0)=0
+	memset(&RunFcb, 0, 36)
+	memset(&TxtFcb, 0, 36)
+	memset(&ComFcb, 0, 36)
+
+	;-- Get User's Parameter --
+	MapFlg = PrtFlg = RomFlg = BasFlg = DbgFlg = 0
+	pe = PRMADR + *PRMCNT: f=0
+
+	p=PRMADR
+	while p<pe
+		if f then
+			if     *p=='m' || *p=='M' then MapFlg=1
+			elseif *p=='p' || *p=='P' then PrtFlg=1
+			elseif *p=='r' || *p=='R' then RomFlg=1
+			elseif *p=='b' || *p=='B' then BasFlg=1
+			elseif *p=='d' || *p=='D' then DbgFlg=1
+			else   f=0
+			endif
+		elseif *p=='-' then
+			f=1
+		endif
+		++p
+	wend
+
+	;-- Get File Name --
+	memcpy(&RunFcb, FNAME1, 12)
+	memcpy(&TxtFcb, FNAME2, 12)
+	if RomFlg then
+		memcpy(&ComFcb, FNAME2, 9): memcpy(&ComFcb+9, "ROM", 3)
+	elseif BasFlg then
+		memcpy(&ComFcb, FNAME2, 9): memcpy(&ComFcb+9, "BIN", 3)
+	else
+		memcpy(&ComFcb, FNAME2, 9): memcpy(&ComFcb+9, "COM", 3)
+	endif
+
+	;-- Read Run Time Routine --
+	gosub GET_OBJTOP:p=ObjTop
+	if bdos(FOPEN, &RunFcb)==FERROR then ErrCod=50: goto ERROR endif
+	while 1
+		bdos(SETDMA, p): if bdos(FREAD, &RunFcb) then break endif
+		p = p + RECLEN
+	wend
+	bdos(FCLOSE, &RunFcb)
+
+	;-- Set Function Table --
+	if RomFlg then
+		Off = ObjTop - ROMTOP
+		memcpy(&Pad, ObjTop+2, 2)
+	elseif BasFlg then
+		memcpy(&p, ObjTop+3, 2)
+		Off = ObjTop - p
+		*(ObjTop-7) = $FE
+		memcpy(ObjTop-6, &p, 2)
+		memcpy(ObjTop-2, &p, 2)
+		memcpy(&Pad, ObjTop+1, 2)
+	else
+		Off = ObjTop - PRGTOP
+		memcpy(&Pad, ObjTop+1, 2)
+	endif
+	memcpy(&RunTbl, Pad+Off,     36)     ; 36=18*2
+	memcpy(&FncTbl, Pad+Off+36, 512)
+	PrgTop=Pad: Pad=Pad+Off
+
+	;-- Initial Program Call --
+	Addr=RunTbl(MCINIT): goto OBJ_CALL
+
+;--------------------------------------
+;  Put Object
+;--------------------------------------
+PUT_OBJ:
+
+	;-- Put Default End Code --
+	gosub OBJ_END
+
+	;-- Check Control Stack --
+	if Ctp then ErrCod=22: goto ERROR endif
+
+	ObjEnd = Pad - 1
+
+	if RomFlg then
+		Pad = ROMWRK
+	elseif BasFlg then
+		p = ObjEnd-Off
+		memcpy(ObjTop-4, &p, 2)
+	endif
+
+	;-- Set Symbol Address --
+	Sbp = ErrCod = 0
+
+	p=&SblTbl
+	while *p
+		l=STRLEN(p)+1
+
+		if SblInf(Sbp) == LBLNDF then
+			printf("Undefined label or array used.(%s)\n", p)
+			ErrCod=23
+
+		elseif SblInf(Sbp) > LBLDEF then
+			Addr = AdrTbl(Sbp): gosub SET_ADDR
+			AdrTbl(Sbp) = Pad  - Off
+			Pad = Pad + (SblInf(Sbp)+1) * 2
+		endif
+		++Sbp
+		p=p+l
+	wend
+
+	if ErrCod then goto ERROR endif
+
+	;-- Create Com File --
+	bdos(FDEL, &ComFcb)
+	if bdos(FCREATE, &ComFcb)==FERROR then ErrCod=51: goto ERROR endif
+
+	if BasFlg then
+		p = ObjTop - 7
+	else
+		p = ObjTop
+	endif
+
+	if RomFlg then
+		l=0
+		while l<128
+			bdos(SETDMA, p): if bdos(FWRITE, &ComFcb) then break endif
+			p = p  + RECLEN
+			++l
+		wend
+	else
+		while 1
+			;-- unsigned int comper --
+			if (p>>1) > (ObjEnd>>1) then break endif
+			bdos(SETDMA, p): if bdos(FWRITE, &ComFcb) then break endif
+			p = p  + RECLEN
+		wend
+	endif
+
+	bdos(FCLOSE, &ComFcb)
+return
+
+;--------------------------------------
+;  Put Object Map
+;--------------------------------------
+PUT_MAP:
+	printf("\n<<     Object information     >>\n\n")
+
+	printf("    --- Run time routine ---\n")
+	printf("\t0100 - %x\n\n", PrgTop-1)
+
+	printf("    --- User's program ---\n" );
+	printf("\t%x - %x\n", PrgTop, (ObjEnd-Off))
+
+	printf("\n    --- Define ---\n" );
+	Sbp=0
+	p=&SblTbl
+	while *p
+		if SblInf(Sbp) == LBLEQU then
+			printf("\t%x : %s\n", AdrTbl(Sbp),p)
+		endif
+		l = STRLEN(p) + 1: ++Sbp
+		p=p+l
+	wend
+
+	printf("\n    --- Variable address ---\n" );
+	Sbp=0
+	p=&SblTbl
+	while *p
+		if SblInf(Sbp) > LBLDEF then
+			printf("\t%x : %s\n", AdrTbl(Sbp),p)
+		endif
+		l = STRLEN(p) + 1: ++Sbp
+		p=p+l
+	wend
+
+	printf("\n    ---  Label address   ---\n")
+	Sbp=0
+	p=&SblTbl
+	while *p
+		if SblInf(Sbp) == LBLDEF then
+			printf("\t%x : %s\n", AdrTbl(Sbp), p)
+		endif
+		l = STRLEN(p) + 1: ++Sbp
+		p=p+l
+	wend
+return
+
+;--------------------------------------
+;    Compile
+;--------------------------------------
+COMPILE:
+	TxtAdr = &TxtBuf
+
+	while 1
+		gosub CUT_SPACE
+		if !*TxtAdr || *TxtAdr==CMTCD then break endif
+
+		;-- Lexical anarysis --
+		gosub LEX_ANA
+
+if DbgFlg then
+	printf("---Token Table---\n")
+	i=0
+	while TknTbl(i)
+		printf("%x ",TknTbl(i))
+		++i
+	wend
+	printf("\n")
+endif
+
+		;-- LABEL ? --
+		if (TknTbl & TKNCOD)==VARTKN && !TknTbl(1) && *TxtAdr==SEPCD then
+			Sbp = TknTbl & $fff
+
+			;-- Duplicate label --
+			if SblInf(Sbp) && SblInf(Sbp) >= LBLEQU then ErrCod=24: goto ERROR endif
+
+			;-- Set real address --
+			if Addr=AdrTbl(Sbp) then gosub SET_ADDR endif
+			AdrTbl(Sbp) = Pad - Off
+			SblInf(Sbp) = LBLDEF
+
+		;-- EQU ? --
+		elseif (TknTbl & TKNCOD)==VARTKN && TknTbl(1)==CTRTKN+26 then
+			Sbp = TknTbl & $fff
+			if SblInf(Sbp) then ErrCod=24: goto ERROR endif
+
+			;-- LABEL EQU -NUM
+			if TknTbl(2) == T_NEG then
+				if (TknTbl(3) & TKNCOD) != NUMTKN then ErrCod=15: goto ERROR endif
+				if TknTbl(4) then ErrCod=16: goto ERROR endif
+				Nmp = TknTbl(3) & $fff
+				AdrTbl(Sbp) = -NumTbl(Nmp)
+
+			;-- LABEL EQU NUM
+			else
+				if (TknTbl(2) & TKNCOD) != NUMTKN then ErrCod=15: goto ERROR endif
+				if TknTbl(3) then ErrCod=16: goto ERROR endif
+				Nmp = TknTbl(2) & $fff
+				AdrTbl(Sbp) = NumTbl(Nmp)
+			endif
+			SblInf(Sbp) = LBLEQU
+
+		else
+			;-- Parsing --
+			 gosub PARSE
+		endif
+
+		if *TxtAdr==SEPCD then ++TxtAdr endif
+	wend
+
+	;-- Object Over Flow Check--
+	if ((Pad-Off) >> 4) > $c00 then ErrCod=35: goto ERROR endif
+return
+
+;--------------------------------------
+;    Lexical analysis
+;--------------------------------------
+LEX_ANA:
+	VarFlg = Tkp = Nmp = 0
+
+	while *TxtAdr && *TxtAdr != SEPCD && *TxtAdr != CMTCD
+		Token=0
+
+		;-- Symbol ?
+		if     *TxtAdr>='A' && *TxtAdr<='Z' then  gosub LEX_SBL
+		elseif *TxtAdr>='a' && *TxtAdr<='z' then  gosub LEX_SBL
+		elseif *TxtAdr=='_'                 then  gosub LEX_SBL
+
+		;-- Numeric ?
+		elseif *TxtAdr>='0' && *TxtAdr<='9' then  gosub LEX_DEC: VarFlg=1
+		elseif *TxtAdr==HEXCD               then  gosub LEX_HEX: VarFlg=1
+		elseif *TxtAdr==SQUTE               then  gosub LEX_CHR: VarFlg=1
+
+		;-- Strings ?
+		elseif *TxtAdr==DQUTE               then  gosub LEX_STR: VarFlg=1
+
+		;-- operation
+		else                                      gosub LEX_OPE
+		endif
+
+		;-- Check Token --
+		if !Token then ErrCod=1: goto ERROR endif
+		TknTbl(Tkp++) = Token
+		gosub CUT_SPACE
+
+		;-- Check Overflow --
+		if (Nmp > 255) then ErrCod=32 goto ERROR endif
+
+	wend
+	TknTbl(Tkp)=0
+
+return
+
+;--------------------------------------
+;    SPACE and TAB code cut
+;--------------------------------------
+CUT_SPACE:
+	while *TxtAdr==' ' || *TxtAdr==TABCD
+		++TxtAdr
+	wend
+	if *TxtAdr<' ' then *TxtAdr=0 endif
+return
+
+;--------------------------------------
+;    Token (Decimal Code)
+;--------------------------------------
+LEX_DEC:
+	n=0
+	while *TxtAdr>='0' && *TxtAdr<='9'
+		n = n*10 + *(TxtAdr++) - '0'
+	wend
+
+LEX_NUM:
+	Token = NUMTKN + Nmp
+	NumTbl(Nmp++) = n
+return
+
+;--------------------------------------
+;    Token (Hex Code)
+;--------------------------------------
+LEX_HEX:
+	n=0
+	while 1
+		++TxtAdr
+		if     *TxtAdr>='0' && *TxtAdr<='9' then n=(n<<4)+ *TxtAdr-'0'
+		elseif *TxtAdr>='A' && *TxtAdr<='F' then n=(n<<4)+ *TxtAdr-'A'+10
+		elseif *TxtAdr>='a' && *TxtAdr<='f' then n=(n<<4)+ *TxtAdr-'a'+10
+		else   break
+		endif
+	wend
+	goto LEX_NUM
+
+;--------------------------------------
+;    Token (Character Code)
+;--------------------------------------
+LEX_CHR:
+	if *(TxtAdr+2)!=SQUTE then ErrCod=2: goto ERROR endif
+	n = *(TxtAdr+1)
+	TxtAdr = TxtAdr + 3
+	goto LEX_NUM
+
+;--------------------------------------
+;    Token (Strings)
+;--------------------------------------
+LEX_STR:
+	NumTbl(Nmp) = TxtAdr+1
+	while *(++TxtAdr)
+		if *TxtAdr==DQUTE then break endif
+	wend
+	if *TxtAdr!=DQUTE then ErrCod=7: goto ERROR endif
+	Token = STRTKN + (Nmp++)
+	++TxtAdr
+return
+
+;--------------------------------------
+;    Token (Symbol)
+;--------------------------------------
+LEX_SBL:
+	VarFlg=0
+	gosub GET_SBL: gosub LEX_CTR
+	if Token then return endif
+
+	gosub CUT_SPACE
+
+	if *TxtAdr=='(' then
+		gosub LEX_FNC
+
+		;-- FNCTKN --
+		if FncAdr then
+			++TxtAdr  ;-- DROP '('
+			Token = FNCTKN + PrmCnt + (Nmp<<4)
+			NumTbl(Nmp++) = FncAdr
+			return
+		endif
+	endif
+
+	gosub SRC_SBL
+
+	;-- ARYTKN --
+	if *TxtAdr=='(' then
+		++TxtAdr  ;-- DROP '('
+
+		if !SblInf(Sbp) then SblInf(Sbp)=LBLNDF endif
+		Token = ARYTKN + Sbp
+
+	;-- EQU ? --
+	elseif SblInf(Sbp)==LBLEQU then
+		VarFlg = 1
+		Token = NUMTKN + Nmp
+		NumTbl(Nmp++) = AdrTbl(Sbp)
+
+	;-- VARTKN --
+	else
+		VarFlg=1: Token=VARTKN + Sbp
+	endif
+
+return
+
+;--------------------------------------
+;    Get Symbol
+;--------------------------------------
+GET_SBL:
+	n = 0
+	l = &LagSbl
+	s = &SmlSbl
+
+	while 1
+		if     *TxtAdr>='0' && *TxtAdr<='9' then *(l++)=*TxtAdr
+		elseif *TxtAdr>='A' && *TxtAdr<='Z' then *(l++)=*TxtAdr
+		elseif *TxtAdr>='a' && *TxtAdr<='z' then *(l++)=*TxtAdr-('a'-'A')
+		elseif *TxtAdr=='_'                 then *(l++)=*TxtAdr
+		else   break
+		endif
+		*(s++) = *(TxtAdr++)
+
+		;-- Check Label Length --
+		if ++n >= 39 then ErrCod=34: goto ERROR endif
+	wend
+
+	;-- NULL terminater --
+	*l = *s = 0
+return
+
+;--------------------------------------
+;    Search Symbol
+;--------------------------------------
+SRC_SBL:
+	Sbp = n = 0
+	p=&SblTbl
+	while *p
+		l = strlen(p) + 1
+		if !memcmp(p, &SmlSbl, l) then return endif
+		++Sbp
+		n=n+l
+		p=p+l
+	wend
+
+	;-- Check Synbol Count --
+	if Sbp>255 then ErrCod=31: goto ERROR endif
+
+	;-- Check Synbol Buffer --
+	if n>2000 then  ErrCod=33: goto ERROR endif
+
+	l = strlen(&SmlSbl) + 1
+	memcpy(p, &SmlSbl, l)
+	*(p+l) = 0
+	AdrTbl(Sbp) = SblInf(Sbp) = 0
+return
+
+;--------------------------------------
+;    Token (Function)
+;--------------------------------------
+LEX_FNC:
+	p=&FncTbl
+	while *p
+		l = STRLEN(p) + 1
+		if !memcmp(p, &LagSbl, l) then
+			PrmCnt=*(p+l)
+			memcpy(&FncAdr, (p+l+1), 2)
+			return
+		endif
+		p=p+l+3
+	wend
+
+	FncAdr=0
+return
+
+;--------------------------------------
+;    Token (Control word)
+;--------------------------------------
+LEX_CTR:
+	if !memcmp(&LagSbl, "IF",       3) then Token = CTRTKN +  1: return endif
+	if !memcmp(&LagSbl, "THEN",     5) then Token = CTRTKN +  2: return endif
+	if !memcmp(&LagSbl, "ELSEIF",   7) then Token = CTRTKN +  3: return endif
+	if !memcmp(&LagSbl, "ELSE",     5) then Token = CTRTKN +  4: return endif
+	if !memcmp(&LagSbl, "ENDIF",    6) then Token = CTRTKN +  5: return endif
+	if !memcmp(&LagSbl, "WHILE",    6) then Token = CTRTKN +  6: return endif
+	if !memcmp(&LagSbl, "WEND",     5) then Token = CTRTKN +  7: return endif
+	if !memcmp(&LagSbl, "REPEAT",   7) then Token = CTRTKN +  8: return endif
+	if !memcmp(&LagSbl, "UNTIL",    6) then Token = CTRTKN +  9: return endif
+	if !memcmp(&LagSbl, "CONTINUE", 9) then Token = CTRTKN + 10: return endif
+	if !memcmp(&LagSbl, "BREAK",    6) then Token = CTRTKN + 11: return endif
+	if !memcmp(&LagSbl, "GOTO",     5) then Token = CTRTKN + 12: return endif
+	if !memcmp(&LagSbl, "GOSUB",    6) then Token = CTRTKN + 13: return endif
+	if !memcmp(&LagSbl, "RETURN",   7) then Token = CTRTKN + 14: return endif
+	if !memcmp(&LagSbl, "DIM",      4) then Token = CTRTKN + 15: return endif
+	if !memcmp(&LagSbl, "CODE",     5) then Token = CTRTKN + 16: return endif
+	if !memcmp(&LagSbl, "DATA",     5) then Token = CTRTKN + 17: return endif
+	if !memcmp(&LagSbl, "FOR",      4) then Token = CTRTKN + 18: return endif
+	if !memcmp(&LagSbl, "NEXT",     5) then Token = CTRTKN + 19: return endif
+	if !memcmp(&LagSbl, "SELECT",   7) then Token = CTRTKN + 20: return endif
+	if !memcmp(&LagSbl, "CASE",     5) then Token = CTRTKN + 21: return endif
+	if !memcmp(&LagSbl, "ENDSEL",   7) then Token = CTRTKN + 22: return endif
+	if !memcmp(&LagSbl, "END",      4) then Token = CTRTKN + 23: return endif
+	if !memcmp(&LagSbl, "STOP",     5) then Token = CTRTKN + 23: return endif
+	if !memcmp(&LagSbl, "TO",       3) then Token = CTRTKN + 24: return endif
+	if !memcmp(&LagSbl, "STEP",     5) then Token = CTRTKN + 25: return endif
+	if !memcmp(&LagSbl, "EQU",      4) then Token = CTRTKN + 26: return endif
+	Token = 0
+return
+
+;--------------------------------------
+;    Token (Operation code)
+;--------------------------------------
+LEX_OPE:
+	p = TxtAdr++
+
+	select *p
+		case ',' : VarFlg = 0: Token = T_CNM
+		case '(' : Token = T_LEFT
+		case ')' : VarFlg = 1: Token = T_RIGHT
+		else
+			if VarFlg then
+				VarFlg = 0
+				++TxtAdr
+				if     !memcmp(p,"++",2) then VarFlg=1: Token = T_INCA
+				elseif !memcmp(p,"--",2) then VarFlg=1: Token = T_DECA
+				elseif !memcmp(p,"<<",2) then Token = T_LSFT
+				elseif !memcmp(p,">>",2) then Token = T_RSFT
+				elseif !memcmp(p,"<=",2) then Token = T_LE
+				elseif !memcmp(p,">=",2) then Token = T_GE
+				elseif !memcmp(p,"==",2) then Token = T_EQ
+				elseif !memcmp(p,"!=",2) then Token = T_NE
+				elseif !memcmp(p,"&&",2) then Token = T_ANDB
+				elseif !memcmp(p,"||",2) then Token = T_ORB
+				else
+				  --TxtAdr
+				  select *p
+				    case '*' : Token = T_MULT
+				    case '/' : Token = T_DIVI
+				    case '%' : Token = T_MOD
+				    case '+' : Token = T_ADD
+				    case '-' : Token = T_SUB
+				    case '<' : Token = T_LT
+				    case '>' : Token = T_GT
+				    case '&' : Token = T_AND
+				    case '^' : Token = T_XOR
+				    case '|' : Token = T_OR
+				    case '=' : Token = T_EQU
+				  endsel
+				endif
+			else
+				++TxtAdr
+				if     !memcmp(p,"++",2) then Token = T_INCB
+				elseif !memcmp(p,"--",2) then Token = T_DECB
+				else
+				  --TxtAdr
+				  select *p
+				    case '&' : Token = T_ADR
+				    case '!' : Token = T_NOT
+				    case '-' : Token = T_NEG
+				    case '*' : Token = T_MEM
+				  endsel
+				endif
+			endif
+	endsel
+return
+
+;--------------------------------------
+;    Syntax analysis(parsing)
+;--------------------------------------
+PARSE:
+	Tkp=0
+
+	while TknTbl(Tkp)
+
+		;-- CTRTKN --
+		if (TknTbl(Tkp) & TKNCOD)==CTRTKN then
+			CtrNo = (TknTbl(Tkp++) & $ff)
+			select CtrNo 
+				case  1: gosub OBJ_IF
+				case  3: gosub OBJ_ELSEIF
+				case  4: gosub OBJ_ELSE
+				case  5: gosub OBJ_ENDIF
+				case  6: gosub OBJ_WHILE
+				case  7: gosub OBJ_WEND
+				case  8: gosub OBJ_REPEAT
+				case  9: gosub OBJ_UNTIL
+				case 10: gosub OBJ_CONT
+				case 11: gosub OBJ_BREAK
+				case 12: gosub OBJ_GO
+				case 13: gosub OBJ_GOSUB
+				case 14: gosub OBJ_RETURN
+				case 15: gosub OBJ_DIM
+				case 16: gosub OBJ_CODE
+				case 17: gosub OBJ_DATA
+				case 18: gosub OBJ_FOR
+				case 19: gosub OBJ_NEXT
+				case 20: gosub OBJ_SELECT
+				case 21: gosub OBJ_CASE
+				case 22: gosub OBJ_ENDSEL
+				case 23: gosub OBJ_END
+				else ErrCod=17: goto ERROR
+			endsel
+
+		else
+			gosub MAKE_TREE
+
+			;-- Check Syntax --
+			if  LstTkn==T_EQU || LstTkn==T_CNM then
+				gosub GEN_CODE
+			elseif LstTkn==T_INCA || LstTkn==T_INCB then
+				gosub GEN_CODE
+			elseif LstTkn==T_DECA || LstTkn==T_DECB then
+				gosub GEN_CODE
+			elseif (LstTkn & TKNCOD) == FNCTKN then
+				gosub GEN_CODE
+			else
+				ErrCod=18: goto ERROR
+			endif
+		endif
+	wend
+return
+
+;--------------------------------------
+;  Making parse tree
+;--------------------------------------
+MAKE_TREE:
+
+	Trp = Stp = 0
+	TreTbl(0) = StkTbl(0) = 0
+
+	while Token=TknTbl(Tkp)
+
+		if Token >= CTRTKN then break endif
+
+		;-- NUMTKN(3000H),STRTKN(4000H),VARTKN(5000H),REGHL(6000H)..PUSHL(6500H) --
+		if Token >= NUMTKN then
+			TreTbl(++Trp) = Token
+
+		;-- '('(C1H),ARYTKN(1000H),FNCTKN(2000H) --
+		elseif Token >= T_LEFT then
+
+			;-- FNCTKN(2000H) --
+			if Token >= FNCTKN then
+				TreTbl(++Trp) = Token  ;-- Push FNCTKN
+			endif
+			StkTbl(++Stp) = Token
+
+		;-- ','(B8H), ')'(C0H) --
+		elseif Token >= T_CNM then
+
+			;-- While Ope --
+			while StkTbl(Stp) < T_RIGHT
+				if !Stp then ErrCod=3: goto ERROR endif
+				TreTbl(++Trp) = StkTbl(Stp--)
+			wend
+
+			;-- FNCTKN(2000H) --
+			if StkTbl(Stp) >= FNCTKN then
+				PrmCnt = StkTbl(Stp) & $f
+
+				;-- ','(B8H) --
+				if Token == T_CNM then
+					if PrmCnt < 2  then ErrCod=4: goto ERROR endif
+					if PrmCnt < 15 then --StkTbl(Stp) endif
+					TreTbl(++Trp) = T_CNM
+
+				elseif PrmCnt==1 then
+					if (TreTbl(Trp) & $fff0)==(StkTbl(Stp) & $fff0) then
+						ErrCod=4: goto ERROR
+					endif
+					TreTbl(++Trp) = T_CNM
+					--Stp  ;-- Drop FNCTKN
+
+				elseif PrmCnt==0 then
+					if (TreTbl(Trp) & $fff0)!=(StkTbl(Stp) & $fff0) then
+						ErrCod=4: goto ERROR
+					endif
+					--Stp  ;-- Drop FNCTKN
+
+				elseif PrmCnt==15 then
+					TreTbl(++Trp) = T_CNM
+					--Stp  ;-- Drop FNCTKN
+
+				else
+					ErrCod=4: goto ERROR
+				endif
+
+			;-- ','(B8H) --
+			elseif Token==T_CNM then
+				ErrCod=5: goto ERROR
+
+			;-- ARYTKN(1000H) --
+			elseif StkTbl(Stp) >= ARYTKN then
+				TreTbl(++Trp) = StkTbl(Stp--)
+
+			else
+				--Stp
+			endif
+
+		else
+			p=Token & $f0
+
+			;-- Check Priorty ---
+			if p==T_INCB || p==0 then ++p endif
+
+			while StkTbl(Stp) && StkTbl(Stp)<T_RIGHT 
+				if (StkTbl(Stp) & $f0) < p then break endif
+				TreTbl(++Trp) = StkTbl(Stp--)
+			wend
+			StkTbl(++Stp) = Token
+		endif
+		++Tkp
+	wend
+
+	while StkTbl(Stp)
+		if StkTbl(Stp) >= T_RIGHT then ErrCod=6: goto ERROR endif
+		TreTbl(++Trp) = StkTbl(Stp--);
+	wend
+
+	TreTbl(Trp+1) = 0
+	TrpEnd = Trp
+	LstTkn = TreTbl(TrpEnd)
+
+if DbgFlg then
+	printf("---Parse Tree(1)---\n")
+	i=Trp
+	while TreTbl(i)
+		printf("%x(%d) ",TreTbl(i),i)
+		--i
+	wend
+	printf("\n")
+endif
+
+return
+
+;--------------------------------------
+;    Gen. Z80 object code
+;--------------------------------------
+GEN_CODE:
+	while TreTbl(Trp) && TreTbl(Trp) < NUMTKN
+
+		;-- FNCTKN --
+		if TreTbl(Trp) >= FNCTKN then
+			Nmp=(TreTbl(Trp) & $ff0) >> 4
+			Addr=NumTbl(Nmp): gosub OBJ_CALL  ;-- CALL FUNCTION
+
+			;-- REGHL --
+			TreTbl(Trp) = REGHL
+			Trp = TrpEnd
+
+		;-- Single Ope --
+		elseif TreTbl(Trp) >= T_INCB then
+			if TreTbl(--Trp) >= NUMTKN then
+				gosub OBJ_SNG
+				if TreTbl(Trp+1) == T_CNM then
+					--Trp
+					Count=2: gosub TREE_SHIFT
+				else
+					Count=1: gosub TREE_SHIFT
+				endif
+			endif
+
+		;-- Double Ope --
+		else
+			if TreTbl(--Trp) >= NUMTKN then
+				if TreTbl(--Trp) >= NUMTKN then
+					gosub OBJ_DBL
+					Count=2: gosub TREE_SHIFT
+
+				else
+					if TreTbl(Trp+1) >= REGHL && TreTbl(Trp+1) <= REGHL2 then
+						TreTbl(Trp+1) = TreTbl(Trp+1) + $300
+						*(Pad++)=$E5 ;-- PUSH HL
+					endif
+				endif
+			endif
+		endif
+	wend
+
+	if Trp != 1 then ErrCod=7: goto ERROR endif
+	Exp = TreTbl(Trp): goto OBJ_HL
+
+;--------------------------------------
+;  Tree table condence
+;--------------------------------------
+TREE_SHIFT:
+	Count = Count + Trp
+	while TreTbl(++Trp)=TreTbl(++Count) wend
+	TrpEnd = --Trp
+
+if DbgFlg then
+	printf("---Parse Tree(2)---\n")
+	i=Trp
+	while TreTbl(i)
+		printf("%x(%d) ",TreTbl(i),i)
+		--i
+	wend
+	printf("\n")
+endif
+return
+
+;--------------------------------------
+;  ope(exp) or (exp)ope
+;--------------------------------------
+OBJ_SNG:
+	ope = TreTbl(Trp+1)
+	Exp = TreTbl(Trp)
+
+	if ope >= ARYTKN then
+		gosub OBJ_HL              ;-- LD HL,Exp
+		*(Pad++) = $29            ;-- ADD HL,HL
+		*(Pad++) = $11
+		Token=ope:gosub OBJ_ADDR  ;-- LD  DE,nn
+		*(Pad++) = $19            ;-- ADD HL,DE
+		TreTbl(Trp) = REGHL2
+		return
+
+	elseif ope >= T_NOT then
+		gosub OBJ_HL  ;-- LD HL,Exp
+		select ope
+			case T_NOT:
+				Addr=RunTbl(MCNOT): gosub OBJ_CALL ;-- CALL MCNOT
+				TreTbl(Trp) = REGHL
+
+			case T_NEG:
+				Addr=RunTbl(MCNEG): gosub OBJ_CALL ;-- CALL MCNEG
+				TreTbl(Trp) = REGHL
+
+			case T_MEM:
+				TreTbl(Trp)=REGHL1
+
+			else
+				*(Pad++) = $E5 ;-- PUSH HL
+		endsel
+		return
+	endif
+
+	TreTbl(Trp) = REGHL
+
+	if ope == T_ADR then
+		if Exp == REGHL2 then
+
+		elseif Exp >= VARTKN && Exp < REGHL then
+			*(Pad++)=$21: Token=Exp: goto OBJ_ADDR ;-- LD HL,Exp
+
+		else
+			ErrCod=8: goto ERROR
+		endif
+		return
+	endif
+
+	if Exp == REGHL2 then
+		*(Pad++)=$5E ;-- LD  E,(HL)
+		*(Pad++)=$23 ;-- INC HL
+		*(Pad++)=$56 ;-- LD  D,(HL)
+		*(Pad++)=$2B ;-- DEC HL
+		*(Pad++)=$EB ;-- EX  DE,HL
+
+	elseif Exp == REGHL1 then
+		*(Pad++)=$5E ;-- LD  E,(HL)
+		*(Pad++)=$00
+		*(Pad++)=$16 ;-- LD  D,0
+		*(Pad++)=$EB ;-- EX  DE,HL
+
+	elseif Exp >= VARTKN && Exp < REGHL then
+		*(Pad++)=$2A: Token=Exp: gosub OBJ_ADDR ;-- LD HL,(nn)
+
+	else
+		ErrCod=9: goto ERROR
+	endif
+
+	if ope == T_INCB || ope == T_INCA then
+		*(Pad++)=$23 ;-- INC HL
+	else
+		*(Pad++)=$2B ;-- DEC HL
+	endif
+
+	select Exp
+		case REGHL2:
+			Addr=RunTbl(MCSTOR): gosub OBJ_CALL
+
+		case REGHL1:
+			*(Pad++)=$7D ;-- LD  A,L
+			*(Pad++)=$12 ;-- LD  (DE),A
+
+		else
+			*(Pad++)=$22: Token=Exp: gosub OBJ_ADDR ;-- LD  (nn),HL
+	endsel
+
+	if ope == T_INCA then
+		*(Pad++)=$2B ;-- DEC HL
+
+	elseif ope==T_DECA then
+		*(Pad++)=$23 ;-- INC HL
+	endif
+return
+
+;--------------------------------------
+;  (exp2)ope(exp1)
+;--------------------------------------
+OBJ_DBL:
+
+	ExDH=0
+	ope =TreTbl(Trp+2)
+	Exp1=TreTbl(Trp+1)
+	Exp2=TreTbl(Trp)
+
+	select ope
+
+		;--(exp)=(exp)
+		case T_EQU:
+
+			if Exp2==REGHL1 || Exp2==REGHL2 then
+				*(Pad++)=$EB           ;-- EX DE,HL
+				Exp=Exp1: gosub OBJ_HL ;-- LD HL,Exp1
+
+				if Exp2==REGHL1 then
+					*(Pad++)=$7D ;-- LD A,L
+					*(Pad++)=$12 ;-- LD (DE),A
+
+				else
+					Addr=RunTbl(MCSTOR): gosub OBJ_CALL
+				endif
+
+			elseif Exp2>=VARTKN && Exp2<REGHL then
+				Exp=Exp1: gosub OBJ_HL     ;-- LD HL,Exp1
+				*(Pad++)=$22
+				Token=Exp2: gosub OBJ_ADDR ;-- LD (nn),HL
+
+			else
+				ErrCod=10: goto ERROR
+			endif
+
+		;--(exp)*(exp)
+		case T_MULT: gosub OBJ_HD: Addr=RunTbl(MCMULT): gosub OBJ_CALL
+
+		;--(exp)/(exp)
+		case T_DIVI: gosub OBJ_HD: Addr=RunTbl(MCDIVI): gosub OBJ_CALLE
+			*(Pad++)=$EB ;-- EX DE,HL
+
+		;--(exp)%(exp)
+		case T_MOD: gosub OBJ_HD: Addr=RunTbl(MCDIVI): gosub OBJ_CALLE
+
+		;--(exp)+(exp)
+		case T_ADD: gosub OBJ_HD
+			*(Pad++)=$19 ;-- ADD HL,DE
+
+		;--(exp)-(exp)
+		case T_SUB: gosub OBJ_HD
+			if ExDH then *(Pad++)=$EB ENDif ;-- EX  DE,HL
+			*(Pad++)=$B7 ;-- OR  A
+			*(Pad++)=$ED
+			*(Pad++)=$52 ;-- SBC HL,DE
+
+		;--(exp)<<(exp)
+		case T_LSFT: gosub OBJ_HD: Addr=RunTbl(MCSFTL): gosub OBJ_CALLE
+
+		;--(exp)>>(exp)
+		case T_RSFT: gosub OBJ_HD: Addr=RunTbl(MCSFTR): gosub OBJ_CALLE
+
+		;--(exp)<(exp)
+		case T_LT: gosub OBJ_HD: Addr=RunTbl(MCLT): gosub OBJ_CALLE
+
+		;--(exp)>(exp)
+		case T_GT: gosub OBJ_DH: Addr=RunTbl(MCLT): gosub OBJ_CALLE
+
+		;--(exp)<=(exp)
+		case T_LE: gosub OBJ_DH: Addr=RunTbl(MCGE): gosub OBJ_CALLE
+
+		;--(exp)>=(exp)
+		case T_GE: gosub OBJ_HD: Addr=RunTbl(MCGE): gosub OBJ_CALLE
+
+		;--(exp)==(exp)
+		case T_EQ: gosub OBJ_HD: Addr=RunTbl(MCEQ): gosub OBJ_CALL
+
+		;--(exp)!=(exp)
+		case T_NE: gosub OBJ_HD: Addr=RunTbl(MCNE): gosub OBJ_CALL
+
+		;--(exp)&(exp)
+		case T_AND: gosub OBJ_HD: Addr=RunTbl(MCAND): gosub OBJ_CALL
+
+		;--(exp)^(exp)
+		case T_XOR: gosub OBJ_HD: Addr=RunTbl(MCXOR): gosub OBJ_CALL
+
+		;--(exp)|(exp)
+		case T_OR: gosub OBJ_HD: Addr=RunTbl(MCOR): gosub OBJ_CALL
+
+		;--(exp)&&(exp)
+		case T_ANDB: gosub OBJ_HD: Addr=RunTbl(MCANDB): gosub OBJ_CALL
+
+		;--(exp)||(exp)
+		case T_ORB: gosub OBJ_HD: Addr=RunTbl(MCORB): gosub OBJ_CALL
+	endsel
+
+	TreTbl(Trp)=$6000
+return
+
+;--------------------------------------
+;  LD HL,Exp2  LD DE,Exp1 (ExDH=0)
+;  LD HL,Exp1  LD DE,Exp2 (ExDH=1)
+;    in :Exp1, Exp2
+;    out:ExDH
+;--------------------------------------
+OBJ_DH:
+	w=Exp1: Exp1=Exp2: Exp2=w
+
+OBJ_HD:
+	;-- REGHL --
+	if Exp1==REGHL then
+		ExDH=1: Exp=Exp2: goto OBJ_DE
+
+	elseif Exp2>=REGHL then
+		Exp=Exp2: gosub OBJ_HL
+		Exp=Exp1: gosub OBJ_DE
+
+	else
+		Exp=Exp1: gosub OBJ_DE
+		Exp=Exp2: gosub OBJ_HL
+	endif
+	ExDH=0
+return
+
+;--------------------------------------
+;  LD HL,Exp
+;    in :Exp
+;--------------------------------------
+OBJ_HL:
+	select Exp
+
+		case REGHL:
+			return
+
+		case REGHL1:
+			*(Pad++)=$6E ;-- LD  L,(HL)
+			*(Pad++)=$26 ;-- LD  H,0
+			*(Pad++)=$00
+
+		case REGHL2:
+			*(Pad++)=$7E ;-- LD  A,(HL)
+			*(Pad++)=$23 ;-- INC HL
+			*(Pad++)=$66 ;-- LD  H,(HL)
+			*(Pad++)=$6F ;-- LD  L,A
+
+		case PUSHL1:
+			*(Pad++)=$E1 ;-- POP HL
+
+		case PUSHL2:
+			*(Pad++)=$E1 ;-- POP HL
+			*(Pad++)=$6E ;-- LD  L,(HL)
+			*(Pad++)=$26 ;-- LD  H,0
+			*(Pad++)=$00
+
+		case PUSHL3:
+			*(Pad++)=$E1 ;-- POP HL
+			*(Pad++)=$7E ;-- LD  A,(HL)
+			*(Pad++)=$23 ;-- INC HL
+			*(Pad++)=$66 ;-- LD  H,(HL)
+			*(Pad++)=$6F ;-- LD  L,A
+		else
+			if Exp >= VARTKN then
+				*(Pad++)=$2A ;-- LD HL,(nn)
+			else
+				*(Pad++)=$21 ;-- LD HL,nn
+			endif
+			Token=Exp: goto OBJ_ADDR
+	endsel
+return
+
+;--------------------------------------
+;  LD DE,Exp
+;    in :Exp
+;--------------------------------------
+OBJ_DE:
+	select Exp
+
+		case REGHL:
+			*(Pad++)=$EB  ;-- EX  DE,HL
+
+		case REGHL1:
+			*(Pad++)=$5E ;-- LD  E,(HL)
+			*(Pad++)=$16 ;-- LD  D,0
+			*(Pad++)=$00
+
+		case REGHL2:
+			*(Pad++)=$5E ;-- LD  E,(HL)
+			*(Pad++)=$23 ;-- INC HL
+			*(Pad++)=$56 ;-- LD  D,(HL)
+
+		case PUSHL1:
+			*(Pad++)=$D1 ;-- POP DE
+
+		case PUSHL2:
+			*(Pad++)=$D1 ;-- POP DE
+			*(Pad++)=$1A ;-- LD  A,(DE)
+			*(Pad++)=$5F ;-- LD  E,A
+			*(Pad++)=$16 ;-- LD  D,0
+			*(Pad++)=$00
+
+		case PUSHL3:
+			*(Pad++)=$C1 ;-- POP BC
+			*(Pad++)=$0A ;-- LD  A,(BC)
+			*(Pad++)=$5F ;-- LD  E,A
+			*(Pad++)=$03 ;-- INC BC
+			*(Pad++)=$0A ;-- LD  A,(BC)
+			*(Pad++)=$57 ;-- LD  D,A
+
+		else
+			if Exp >= VARTKN then
+				*(Pad++)=$ED ;-- LD DE,(nn)
+				*(Pad++)=$5B
+			else
+				*(Pad++)=$11 ;-- LD DE,nn
+			endif
+			Token=Exp: goto OBJ_ADDR
+	endsel
+return
+
+;--------------------------------------
+;  IF THEN (CTRTKN+1 .. 2)
+;--------------------------------------
+OBJ_IF:
+	Ctp=Ctp+4
+	CtrTbl(Ctp)=CTRTKN+1
+	CtrTbl(Ctp-2)=0
+
+;--------------------------------------
+;  IF/ELSEIF
+;--------------------------------------
+OBJ_IF1:
+	gosub OBJ_IF2
+	if TknTbl(Tkp++)!=CTRTKN+2 then ErrCod=11: goto ERROR endif
+return
+
+;--------------------------------------
+;  IF/ELSEIF/WHILE
+;--------------------------------------
+OBJ_IF2:
+	gosub OBJ_IF3
+	CtrTbl(Ctp-1)=Pad
+	Word=0: goto OBJ_WORD
+
+;--------------------------------------
+;  IF/ELSEIF/WHILE/UNTIL
+;--------------------------------------
+OBJ_IF3:
+	if !TknTbl(Tkp) then ErrCod=21: goto ERROR endif
+	gosub MAKE_TREE: gosub GEN_CODE
+
+	;-- Optimaize --
+	select LstTkn
+		case T_EQ  : *(Pad++)=$C2  ;(exp)==(exp) => JP NZ
+		case T_ANDB: *(Pad++)=$CA  ;(exp)&&(exp) => JP Z
+		case T_ORB : *(Pad++)=$CA  ;(exp)||(exp) => JP Z
+		case T_NE  : *(Pad++)=$CA  ;(exp)!=(exp) => JP Z
+		case T_LT  : *(Pad++)=$D2  ;(exp)< (exp) => JP NC
+		case T_GT  : *(Pad++)=$D2  ;(exp)> (exp) => JP NC
+		case T_LE  : *(Pad++)=$DA  ;(exp)<=(exp) => JP C
+		case T_GE  : *(Pad++)=$DA  ;(exp)>=(exp) => JP C
+		else
+			*(Pad++)=$7C ;-- LD A,H
+			*(Pad++)=$B5 ;-- OR L
+			*(Pad++)=$CA ;-- JP Z
+	endsel
+return
+
+;--------------------------------------
+;  ELSEIF (CTRTKN+3)
+;--------------------------------------
+OBJ_ELSEIF:
+	if CtrTbl(Ctp)!=CTRTKN+1 then ErrCod=11: goto ERROR endif
+	gosub OBJ_ELSE1
+	goto  OBJ_IF1
+
+;--------------------------------------
+;  ELSE (CTRTKN+4)
+;--------------------------------------
+OBJ_ELSE:
+	if CtrTbl(Ctp)!=CTRTKN+1 && CtrTbl(Ctp)!=CTRTKN+21 then
+		ErrCod=11: goto ERROR
+	endif
+	CtrTbl(Ctp)=CTRTKN+4
+	gosub OBJ_ELSE1
+	CtrTbl(Ctp-1)=0
+return
+
+;--------------------------------------
+;  ELSE/ELSEIF
+;--------------------------------------
+OBJ_ELSE1:
+	*(Pad++)=$C3
+	Word=CtrTbl(Ctp-2)
+	CtrTbl(Ctp-2)=Pad
+	gosub OBJ_WORD ;-- JP endif
+	Addr=CtrTbl(Ctp-1)
+	goto SET_ADDR
+
+;--------------------------------------
+;  ENDIF (CTRTKN+5)
+;--------------------------------------
+OBJ_ENDIF:
+	if CtrTbl(Ctp)!=CTRTKN+1 && CtrTbl(Ctp)!=CTRTKN+4 then
+		ErrCod=11: goto ERROR
+	endif
+
+;-- ENDIF/ENDSEL --
+OBJ_ENDIF1:
+	Addr=CtrTbl(Ctp-1): gosub SET_ADDR
+	Addr=CtrTbl(Ctp-2): gosub SET_ADDR
+	Ctp=Ctp-4
+return
+
+;--------------------------------------
+;  WHILE (CTRTKN+6)
+;--------------------------------------
+OBJ_WHILE:
+	Ctp=Ctp+4
+	CtrTbl(Ctp)=CTRTKN+6
+	CtrTbl(Ctp-2)=Pad-Off
+	goto OBJ_IF2
+
+;--------------------------------------
+;  WEND (CTRTKN+7)
+;--------------------------------------
+OBJ_WEND:
+	if CtrTbl(Ctp)!=CTRTKN+6 then ErrCod=11: goto ERROR endif
+	*(Pad++)=$C3
+
+;--------------------------------------
+;  WEND/UNTIL/NEXT
+;--------------------------------------
+OBJ_LOOP:
+	Word=CtrTbl(Ctp-2): gosub OBJ_WORD ;-- JP LOOP
+	Addr=CtrTbl(Ctp-1): gosub SET_ADDR
+	Ctp=Ctp-4
+return
+
+;--------------------------------------
+;  REPEAT (CTRTKN+8)
+;--------------------------------------
+OBJ_REPEAT:
+	Ctp=Ctp+4: CtrTbl(Ctp)=CTRTKN+8
+	CtrTbl(Ctp-1)=0
+	CtrTbl(Ctp-2)=Pad-Off
+	CtrTbl(Ctp-3)=0
+return
+
+;--------------------------------------
+;  UNTIL (CTRTKN+9)
+;--------------------------------------
+OBJ_UNTIL:
+	if CtrTbl(Ctp)!=CTRTKN+8 then ErrCod=11: goto ERROR endif
+	Addr=CtrTbl(Ctp-3): gosub SET_ADDR
+	gosub OBJ_IF3: goto OBJ_LOOP
+
+;-------------------------------------------------
+;  FOR TO STEP (CTRTKN+18)(CTRTKN+24)(CTRTKN+25)
+;-------------------------------------------------
+OBJ_FOR:
+	exp1=exp2=0
+	tp=Tkp
+	while Token=TknTbl(tp)
+		if Token==CTRTKN+24 then
+			TknTbl(tp) = 0
+			exp1 = tp + 1
+		elseif Token==CTRTKN+25 then
+			TknTbl(tp) = 0
+			exp2 = tp + 1
+		endif
+		++tp
+	wend
+	if (!exp1) then ErrCod=11: goto ERROR endif
+
+	gosub MAKE_TREE: gosub GEN_CODE
+	*(Pad++)=$C3
+	jadr=Pad
+	Word=0: gosub OBJ_WORD
+
+	Ctp=Ctp+4: CtrTbl(Ctp)=CTRTKN+18
+	CtrTbl(Ctp-1)=0
+	CtrTbl(Ctp-2)=Pad-Off
+
+	Tkp=exp1: gosub MAKE_TREE: gosub GEN_CODE
+
+	;-- Optimaize --
+	select LstTkn
+		case T_EQ  : *(Pad++)=$CA  ;(exp)&&(exp) => JP Z
+		case T_ANDB: *(Pad++)=$C2  ;(exp)==(exp) => JP NZ
+		case T_ORB : *(Pad++)=$C2  ;(exp)==(exp) => JP NZ
+		case T_NE  : *(Pad++)=$C2  ;(exp)==(exp) => JP NZ
+		case T_LT  : *(Pad++)=$DA  ;(exp)>=(exp) => JP C
+		case T_GT  : *(Pad++)=$DA  ;(exp)>=(exp) => JP C
+		case T_LE  : *(Pad++)=$D2  ;(exp)> (exp) => JP NC
+		case T_GE  : *(Pad++)=$D2  ;(exp)> (exp) => JP NC
+		else
+			*(Pad++)=$7C ;-- LD A,H
+			*(Pad++)=$B5 ;-- OR L
+			*(Pad++)=$C2 ;-- JP NZ
+	endsel
+
+	CtrTbl(Ctp-3)=Pad
+	Word=0: gosub OBJ_WORD
+
+	if (exp2) then
+		Tkp=exp2: gosub MAKE_TREE: gosub GEN_CODE
+	endif
+
+	Addr=jadr: goto SET_ADDR
+
+;--------------------------------------
+;  NEXT (CTRTKN+19)
+;--------------------------------------
+OBJ_NEXT:
+	if CtrTbl(Ctp)!=CTRTKN+18 then ErrCod=11: goto ERROR endif
+	jadr=CtrTbl(Ctp-3)
+	*(Pad++)=$C3: gosub OBJ_LOOP
+	Addr=jadr: goto SET_ADDR
+
+;--------------------------------------
+;  CONTINUE (CTRTKN+10)
+;--------------------------------------
+OBJ_CONT:
+	gosub OBJ_LPJUMP
+	*(Pad++)=$C3
+
+	if CtrTbl(LpCtp)!=CTRTKN+8 then
+		Word=CtrTbl(LpCtp-2)
+
+	else
+		Word=CtrTbl(LpCtp-3): CtrTbl(LpCtp-3)=Pad
+	endif
+	goto OBJ_WORD
+
+;--------------------------------------
+;  BREAK (CTRTKN+11)
+;--------------------------------------
+OBJ_BREAK:
+	gosub OBJ_LPJUMP
+	*(Pad++)=$C3: Word=CtrTbl(LpCtp-1)
+	CtrTbl(LpCtp-1)=Pad: goto OBJ_WORD ;-- JP END
+
+;--------------------------------------
+;  CONTINUE/BREAK SUB
+;--------------------------------------
+OBJ_LPJUMP:
+	LpCtp=Ctp
+	while LpCtp>0
+		c=CtrTbl(LpCtp)
+		if c==CTRTKN+6 || c==CTRTKN+8 || c==CTRTKN+18 then return endif
+		LpCtp=LpCtp-4
+	wend
+	ErrCod=11: goto ERROR
+
+;--------------------------------------
+;  GOTO (CTRTKN+12)
+;--------------------------------------
+OBJ_GO:
+	;-- GOTO(exp) --
+	if TknTbl(Tkp)==T_LEFT then
+		gosub MAKE_TREE: gosub GEN_CODE
+
+		;-- JP (HL)
+		*(Pad++)=$E9
+
+	;-- goto LABEL --
+	elseif (TknTbl(Tkp) & TKNCOD)==VARTKN then
+		Sbp=TknTbl(Tkp) & $FFF
+		if !SblInf(Sbp) then SblInf(Sbp)=LBLNDF endif
+
+		;-- JP LABEL
+		*(Pad++)=$C3: Token=TknTbl(Tkp++): goto OBJ_ADDR
+
+	else
+		ErrCod=11: goto ERROR
+	endif
+return
+
+;--------------------------------------
+;  GOSUB (CTRTKN+13)
+;--------------------------------------
+OBJ_GOSUB:
+	;-- GOSUB(exp) --
+	if TknTbl(Tkp)==T_LEFT then
+		gosub MAKE_TREE:  gosub GEN_CODE
+
+		;-- CALL(HL)
+		Addr=RunTbl(MCCALL): goto OBJ_CALL
+
+	;-- gosub LABEL --
+	elseif (TknTbl(Tkp) & TKNCOD)==VARTKN then
+		Sbp=TknTbl(Tkp) & $FFF
+
+		if !SblInf(Sbp) then SblInf(Sbp)=LBLNDF endif
+
+		;-- CALL LABEL
+		*(Pad++)=$CD: Token=TknTbl(Tkp++): goto OBJ_ADDR
+
+	else
+		ErrCod=11: goto ERROR
+	endif
+
+;--------------------------------------
+;  RETURN (CTRTKN+14)
+;--------------------------------------
+OBJ_RETURN:
+	*(Pad++)=$C9
+return
+
+;--------------------------------------
+;  DIM (CTRTKN+15)
+;--------------------------------------
+OBJ_DIM:
+	REPEAT
+		;-- ARYTKN --
+		if (TknTbl(Tkp) & TKNCOD)!=ARYTKN then ErrCod=13: goto ERROR endif
+		Sbp=TknTbl(Tkp++) & $FFF
+
+		;-- NUMTKN --
+		if (TknTbl(Tkp) & TKNCOD)!=NUMTKN then ErrCod=13: goto ERROR endif
+		Nmp=TknTbl(Tkp++) & $FFF
+
+		SblInf(Sbp)=NumTbl(Nmp)
+		if TknTbl(Tkp++)!=T_RIGHT then ErrCod=13: goto ERROR endif
+
+	UNTIL TknTbl(Tkp++)!=T_CNM
+	--Tkp
+return
+
+;---------------------------------------
+;  CODE (CTRTKN+16)
+;--------------------------------------
+OBJ_CODE:
+	REPEAT
+		Token=TknTbl(Tkp)
+
+		;-- NUMTKN --
+		if (Token & TKNCOD)==NUMTKN then
+			Nmp=TknTbl(Tkp) & $FFF
+			Word=NumTbl(Nmp)
+			if Word & $FF00 then gosub OBJ_WORD else *(Pad++)=Word endif
+
+		elseif (Token & TKNCOD)==STRTKN then
+			gosub OBJ_STR
+
+		;-- &VARTKN --
+		elseif Token==T_ADR then
+			if (TknTbl(++Tkp) & TKNCOD)!=VARTKN then ErrCod=14: goto ERROR endif
+			Token=TknTbl(Tkp): gosub OBJ_ADDR
+
+		;-- -NUMTKN --
+		elseif TknTbl(Tkp)==T_NEG then
+			if (TknTbl(++Tkp) & TKNCOD)!=NUMTKN then ErrCod=14: goto ERROR endif
+			Nmp=TknTbl(Tkp) & $FFF
+			Word=-NumTbl(Nmp)
+			if Word & $FF00 then gosub OBJ_WORD else *(Pad++)=Word endif
+
+		else
+			ErrCod=14: goto ERROR
+		endif
+		++Tkp
+
+	UNTIL TknTbl(Tkp++)!=T_CNM
+	--Tkp
+return
+
+;--------------------------------------
+;  DATA (CTRTKN+17)
+;--------------------------------------
+OBJ_DATA:
+	REPEAT
+		;-- NUMTKN --
+		if (TknTbl(Tkp) & TKNCOD)==NUMTKN then
+			Nmp=TknTbl(Tkp) & $FFF
+			Word=NumTbl(Nmp): gosub OBJ_WORD
+
+		;-- &VARTKN --
+		elseif TknTbl(Tkp)==T_ADR then
+			if (TknTbl(++Tkp) & TKNCOD)!=VARTKN then ErrCod=15: goto ERROR endif
+			Token=TknTbl(Tkp): gosub OBJ_ADDR
+
+		;-- -NUMTKN --
+		elseif TknTbl(Tkp)==T_NEG then
+			if (TknTbl(++Tkp) & TKNCOD)!=NUMTKN then ErrCod=15: goto ERROR endif
+			Nmp=TknTbl(Tkp) & $FFF
+			Word=-NumTbl(Nmp): gosub OBJ_WORD
+
+		else
+			ErrCod=15: goto ERROR
+		endif
+		++Tkp
+	UNTIL TknTbl(Tkp++)!=T_CNM
+	--Tkp
+return
+
+;--------------------------------------
+;  SELECT (CTRTKN+20)
+;--------------------------------------
+OBJ_SELECT:
+	Ctp=Ctp+4
+	CtrTbl(Ctp-2)=0
+	CtrTbl(Ctp)=CTRTKN+20
+	if !TknTbl(Tkp) then ErrCod=11: goto ERROR endif
+	gosub MAKE_TREE: goto GEN_CODE
+
+;--------------------------------------
+;  CASE (CTRTNK+21)
+;--------------------------------------
+OBJ_CASE:
+	if CtrTbl(Ctp)==CTRTKN+20 then
+		CtrTbl(Ctp)=CTRTKN+21
+		*(Pad++)=$EB ;-- EX DE,HL
+
+	elseif CtrTbl(Ctp)==CTRTKN+21 then
+		gosub OBJ_ELSE1
+
+	else
+		ErrCod=11: goto ERROR
+	endif
+
+	if (TknTbl(Tkp) & TKNCOD)!=NUMTKN then ErrCod=11: goto ERROR endif
+
+	Nmp= TknTbl(Tkp++) & $FFF
+	if TknTbl(Tkp) then ErrCod=11: goto ERROR endif
+
+	*(Pad++)=$21
+	Word=NumTbl(Nmp): gosub OBJ_WORD     ;-- LD HL,Num
+	*(Pad++)=$B7                         ;-- OR A
+	*(Pad++)=$ED: *(Pad++)=$52           ;-- SBC HL,DE
+	*(Pad++)=$C2: CtrTbl(Ctp-1)=Pad
+	*(Pad++)=$00: *(Pad++)=$00           ;-- JP  NZ,&ENDSEL
+return
+
+;--------------------------------------
+;  ENDSEL (CTRTKN+22)
+;--------------------------------------*/
+OBJ_ENDSEL:
+	if CtrTbl(Ctp)==CTRTKN+4 || CtrTbl(Ctp)==CTRTKN+21 then
+		goto OBJ_ENDIF1
+	endif
+	ErrCod=11: goto ERROR
+
+;--------------------------------------
+;  END (CTRTKN+23)
+;--------------------------------------
+OBJ_END:
+	*(Pad++)=$C3: *(Pad++)=$00: *(Pad++)=$00 ;-- JP 0000
+return
+
+;--------------------------------------
+;  Call object put
+;    in :Addr
+;--------------------------------------
+OBJ_CALLE:
+	if ExDH then *(Pad++)=$EB endif ;-- EX DE,HL
+
+OBJ_CALL:
+	*(Pad++)=$CD: Word=Addr: goto OBJ_WORD ;-- CALL Addr
+
+;--------------------------------------
+;  Var Num Ary address set
+;    in :Token
+;--------------------------------------
+OBJ_ADDR:
+	n=Token & $FFF
+
+	if Token>=VARTKN || Token<FNCTKN then
+		Word=AdrTbl(n)
+		if SblInf(n)!=LBLDEF then AdrTbl(n)=Pad endif
+		goto OBJ_WORD
+
+	elseif (Token & TKNCOD)==STRTKN then
+
+		;-- Set real address --
+		Word=Pad-Off+5: gosub OBJ_WORD
+		*(Pad++)=$C3: Addr=Pad: Word=0: gosub OBJ_WORD
+		gosub OBJ_STR
+
+		;-- Set real address --
+		goto SET_ADDR
+	endif
+
+	;-- NUMTKN --
+	Word=NumTbl(n): goto OBJ_WORD
+
+;--------------------------------------
+;  Set real address until NULL
+;    in :Addr
+;--------------------------------------
+SET_ADDR:
+	radr=Pad-Off
+
+	while Addr
+		memcpy( &nxta, Addr, 2)
+		memcpy( Addr, &radr, 2)
+		Addr=nxta
+	wend
+
+return
+
+;--------------------------------------
+;  2byte code put to *(Pad)
+;    in :Word
+;--------------------------------------
+OBJ_WORD:
+	*(Pad++)=*(&Word): *(Pad++)=*(&Word+1)
+return
+
+;--------------------------------------
+;  Token (Strings)
+;    in :Token
+;--------------------------------------
+OBJ_STR:
+
+	Nmp=Token & $FFF
+
+	strp=NumTbl(Nmp)
+	while *strp && *strp!=DQUTE
+		if *strp=='\' then
+			select *(++strp)
+				case 'a' : *(Pad++)=$7
+				case 'b' : *(Pad++)=$8
+				case 't' : *(Pad++)=$9
+				case 'n' : *(Pad++)=$D
+				           *(Pad++)=$A
+				case 'v' : *(Pad++)=$B
+				case 'f' : *(Pad++)=$C
+				case 'r' : *(Pad++)=$D
+				else       *(Pad++)=*strp
+			endsel
+
+		else
+			*(Pad++)=*strp
+		endif
+		++strp
+	wend
+
+	;-- NULL Terminater--
+	*(Pad++)=0
+return
+
+;--------------------------------------
+;  FGETS
+;    in :FcbAdr,DmaPos,BufAdr
+;    out:FilEnd
+;--------------------------------------
+FGETS:
+	i=0
+	while i<256
+		gosub FGETC: if FilEnd then return endif
+
+		select GetChr
+			case $0D : *(&TxtBuf+i)=0
+			case $0A : *(&TxtBuf+i)=0: break
+			case $1A : *(&TxtBuf+i)=0: break
+			else       *(&TxtBuf+i)=GetChr
+		endsel
+		++i
+	wend
+
+	if i >= 256 then ErrCod=53: goto ERROR endif
+
+	*(&TxtBuf+i)=0
+return
+
+;--------------------------------------
+;  FGETC
+;    in :FcbAdr,DmaPos
+;    out:GetChr,FilEnd
+;--------------------------------------
+FGETC:
+	FilEnd=0
+	if ++Dmp>127 then
+		Dmp=0
+		if bdos(FREAD, &TxtFcb) then FilEnd=1: return endif
+	endif
+	if (GetChr=*(Dma+Dmp))==$1A then Dmp=128 endif
+return
+
+;--------------------------------------
+;    Put Error Message
+;--------------------------------------
+ERROR:
+	if ErrCod < 30 then
+		if TxtNo then
+			printf("[%d-%d]", TxtNo, ErrCod)
+		else
+			printf("(%d)", ErrCod)
+		endif
+		printf("%s\n", &TxtBuf)
+	endif
+
+	select ErrCod
+		case  1 : printf("Illegal token or syntax error\n")
+		case  2 : printf("Missing or misplaced (')\n")
+		case  3 : printf("Unmatched left parenthesis\n")
+		case  4 : printf("Parameter mismatch\n")
+		case  5 : printf("Missing or misplaced (,)\n")
+		case  6 : printf("Unmatched right parenthesis\n")
+		case  7 : printf("Missing or misplaced (%c)\n",DQUTE)
+		case  8 : printf("Missing (&) operator\n")
+		case  9 : printf("Missing (++ or --) operator\n")
+		case 10 : printf("Bad left operand in assignment expression\n")
+		case 11 : printf("Mismatched control structure(%d)\n",CtrNo)
+		case 12 : printf("Illegal (GOTO or GOSUB)\n")
+		case 13 : printf("Bad constant(DIM)\n")
+		case 14 : printf("Bad constant(CODE)\n")
+		case 15 : printf("Bad constant(EQU)\n")
+		case 16 : printf("Bad constant(EQU).Syntax error\n")
+		case 17 : printf("Illegal token(%x)\n",TknTbl(Tkp))
+		case 18 : printf("Syntax error(end token=%x)\n",LstTkn)
+		case 21 : printf("No Condition code(%d)\n",CtrNo)
+		case 22 : printf("Mismatched control structure\n")
+		case 23 :
+		case 24 : printf("Duplicate label\n")
+		case 32 : printf("Out of wark space\n")
+		case 31 : printf("Too many symbol\n")
+		case 33 : printf("Out of symbol space\n")
+		case 34 : printf("Symbol too long\n")
+		case 35 : printf("Out of memory\n")
+		case 50 : printf("Can't open run-time file\n")
+		case 51 : printf("COM-file create error\n")
+		case 52 : printf("COM-file write error\n")
+		case 53 : printf("Too long text length\n")
+		case 60 : printf("Usage : mc RUNFILE SOURCE [-p|m]\n")
+		case 61 : printf("Can't open souce file\n" )
+		else      printf("Syntax error\n")
+	endsel
+END
+
+;--------------------------------------
+;  GET_OBJTOP
+;    out:ObjTop
+;--------------------------------------
+GET_OBJTOP:
+	ObjTop=&MC_END_ADDRESS
+
+	;-- Skip Address for BLOAD HEADER (7byte)
+	if BasFlg then
+		ObjTop = ObjTop + 7
+	endif
+return
+

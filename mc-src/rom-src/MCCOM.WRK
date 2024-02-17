@@ -1,0 +1,28 @@
+;=======================================
+;  << Mini Compiler Ver1.0 >>
+;          WORK AREA
+;=======================================
+	DSEG
+
+RNDSEE:	DS	4
+
+TXTBUF:	
+WORK:	DS	255
+CONF:	DS	1
+
+RPORT0:	DB	98H			;READ  PORT#0
+WPORT0:	DB	98H			;WRITE PORT#0
+DOTSX:	DS	2
+DOTSY:	DS	1
+GWORK:
+PARM1:	DS	2
+PARM2:	DS	2
+PARM3:	DS	2
+PARM4:	DS	2
+PARM5:	DS	2
+PARM6:	DS	2
+PARM7:	DS	2
+PARM8:	DS	2
+PARM9:	DS	2
+	END
+

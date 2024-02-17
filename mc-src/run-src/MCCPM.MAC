@@ -1,0 +1,25 @@
+;=======================================
+;  << Mini Compiler Ver1.3 >>
+;    RUN-TIME & FUNCTION for CP/M
+;=======================================
+BDOS	EQU	0005H
+
+;-----------------------
+;  Function for CP/M
+;-----------------------
+INCLUDE	MCCPM.FNC
+
+;-----------------------
+;  MC-Initialize
+;-----------------------
+$MCINIT:
+	RET
+
+;-----------------------
+;  Table for CP/M
+;-----------------------
+INCLUDE MCCPM.TBL
+
+	DB	0
+	END	START
+

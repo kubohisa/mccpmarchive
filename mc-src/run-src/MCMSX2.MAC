@@ -1,0 +1,592 @@
+;=======================================
+;  << Mini Compiler Ver1.0 >>
+;    RUN-TIME & FUNCTION for MSX2
+;=======================================
+;-------------------------------
+;    Header for MSX
+;-------------------------------
+INCLUDE MCMSX.HED
+
+BDOS	EQU	0005H
+RDVRM	EQU	0174H		;NEW READ  VRAM (MSX2)
+WRTVRM	EQU	0177H		;NEW WRITE VRAM (MSX2)
+EXTROM	EQU	015FH		;SUBROM CALL
+
+;-------------------------------
+;    SUB ROM ENTRY
+;-------------------------------
+GRPPRT	EQU	0089H		;GPRINT
+CLSSUB	EQU	0115H		;SCREEN CLEAR
+SETPAG	EQU	013DH		;SET PAGE
+INIPLT	EQU	0141H		;INIT PALETTE
+RSTPLT	EQU	0145H		;RESET PALETTE
+GETPLT	EQU	0149H		;GET PALETTE
+SETPLT	EQU	014DH		;SET PALETTE
+BLTVM	EQU	0195H		;RAM TO VRAM
+NEWPAD	EQU	01ADH		;NEW PAD
+KNJPRT	EQU	01BDH		;KANJI PRINT
+
+;-------------------------------
+;    Function for CP/M,MSX
+;-------------------------------
+INCLUDE MCCPM.FNC
+INCLUDE MCMSX.FNC
+
+;-------------------------------
+;    MC-Initialize
+;-------------------------------
+$MCINIT:
+
+;-------------------------------
+;  ROM CALL ROUTINE
+;     SET TO STACK TOP
+;-------------------------------
+	DI
+	POP	DE			;DE=RETURN ADDRESS
+	LD	HL,(6)			;HL=TPA END ADDRESS
+	LD	BC,SUBEND-STKSB0
+	OR	A
+	SBC	HL,BC
+	LD	SP,HL
+	PUSH	DE
+	LD	(H_NMI+1),HL		;SUB-ROM HOCK ENTRY
+	EX	DE,HL
+	LD	HL,STKAD0-STKSB0+2
+	ADD	HL,DE
+	LD	(SUBROM+2),HL		;SUB-ROM ENTRY SET ADDRESS
+	LD	HL,STKSB0
+	LDIR
+	LD	A,0C3H			;JP CODE
+	LD	(H_NMI),A
+
+;-------------------------------
+;  GRAPHIC INITIALIZE
+;-------------------------------
+GINIT:
+	LD	HL,6
+	LD	A,(EXPTBL)
+	CALL	RDSLT
+	LD	(RPORT0),A	;READ  PORT#0 SET
+	LD	HL,7
+	LD	A,(EXPTBL)
+	CALL	RDSLT
+	LD	(WPORT0),A	;WRITE PORT#0 SET
+	EI
+	RET
+
+;-----------------------
+;  CLS()
+;-----------------------
+_CLS:
+	LD	IX,CLSSUB
+	JP	SUBROM
+
+;-----------------------
+;  GPOS( X, Y )
+;-----------------------
+_GPOS:
+	POP	BC		;BC=RETURN ADDRESS
+	POP	HL		;HL=X
+	LD	(GRPACX),HL
+	POP	HL		;HL=Y
+	LD	(GRPACY),HL
+	PUSH	BC
+	RET
+
+;---------------------------------------
+;  PALETT( NO, RED, BLUE, GREEN )
+;---------------------------------------
+_PALETT:
+	POP	BC			;BC=RETURN ADDRESS
+	POP	HL			;L=PALETTE NO
+	LD	D,L
+	POP	HL			;L=RED
+	LD	A,L
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	AND	0F0H
+	POP	HL			;L=BLUE
+	OR	L
+	POP	HL			;L=GREEN
+	LD	E,L
+	PUSH	BC
+	LD	IX,SETPLT
+	JP	SUBROM
+;-----------------------
+;  MOUSE( MODE )
+;-----------------------
+_MOUSE:
+	POP	BC		;BC=RETURN ADDRESS
+	POP	HL		;L=MODE
+	PUSH	BC
+	LD	A,L
+	LD	IX,NEWPAD
+	CALL	SUBROM
+	LD	L,A
+	LD	H,0
+	OR	A
+	RET	P
+	DEC	H
+	RET
+
+;-------------------------------
+;  COLSPR( NO, CADR )
+;-------------------------------
+_COLSPR:
+	POP	BC		;BC=RETUAN ADDRESS
+	POP	HL		;HL=SPRITE NO
+	POP	DE		;DE=COLOR DATA ADDRESS
+	PUSH	BC
+	LD	A,(SCRMOD)	;SCREEN NO CHECK
+	CP	4
+	RET	C
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	LD	BC,(ATRBAS)
+	ADD	HL,BC
+	LD	BC,512
+	SBC	HL,BC		;HL=(ATRBAS)+NO*16-512
+	LD	A,(RG1SAV)
+	AND	2
+	LD	B,0
+	LD	C,8		;BC=SPRITE SIZE
+	JP	Z,LDIRMV
+	LD	C,16
+	JP	LDIRMV
+
+;-------------------------------
+;  SETPAG( DISP, ACT )
+;-------------------------------
+_SETPAG:
+	POP	BC		;BC=RETURN ADDRESS
+	POP	HL		;HL=DISPLAY PAGE
+	LD	(DPPAGE),HL
+	POP	HL		;DE=ACTIVE PAGE
+	LD	(ACPAGE),HL
+	PUSH	BC
+	LD	IX,SETPAG
+	JP	SUBROM
+
+;-------------------------------
+;  PSET( X, Y, COL, LOG )
+;-------------------------------
+_PSET:
+	POP	IX		;IX=RETURN ADDRESS
+	LD	B,4		;B =PARAMETER COUNT
+	CALL	PRMGET
+	PUSH	IX
+	CALL	SCRCHK		;SCREEN CHECK
+	LD	HL,(ACPAGE)	;L = (ACPAGE)
+	CALL	CLYOFF		;CALC Y OFFSET
+	LD	(PARM2+1),A
+	DI
+	CALL	WAITVDP
+	LD	A,36
+	CALL	SETREG
+	CALL	VDPCMD1		;VDP COMMAND SUB(1)
+	LD	A,44
+	CALL	SETREG
+	LD	A,(PARM3)
+	OUT	(C),A		;R#44 = COLOR
+	XOR	A
+	OUT	(C),A		;R#45 = ARG
+	LD	A,(PARM4)
+	AND	0FH
+	OR	50H
+	OUT	(C),A		;R#46 = 50H + Logical ope.
+	EI
+	RET
+
+;-----------------------
+;  POINT( X, Y )
+;-----------------------
+_POINT:
+	POP	BC		;BC=RETURN ADDRESS
+	POP	HL
+	LD	(PARM1),HL	;(PARM1)=X
+	POP	HL
+	LD	(PARM2),HL	;(PARM2)=Y
+	PUSH	BC
+	CALL	SCRCHK		;SCREEN NO CHECK
+	LD	HL,(ACPAGE)	;L = (ACPAGE)
+	CALL	CLYOFF		;CALC Y OFFSET
+	LD	(PARM2+1),A
+	DI
+	CALL	WAITVDP
+	LD	A,32
+	CALL	SETREG
+	CALL	VDPCMD1		;VDP COMMAND SUB(1)
+	LD	A,45
+	CALL	SETREG
+	XOR	A
+	OUT	(C),A		;R#45 = ARG
+	LD	A,40H
+	OUT	(C),A		;R#46 = 40H
+	CALL	WAITVDP
+	LD	A,7
+	CALL	GETSTA
+	LD	L,A
+	LD	H,0
+	CALL	RSTST0
+	EI
+	RET
+
+;-----------------------------------------------
+;  LINE( X, Y, X1, Y1, COL, BOX, LOG )
+;-----------------------------------------------
+_LINE:
+	POP	IX		;IX=RETURN ADDRESS
+	LD	B,7		;B=PARAMETER COUNT
+	CALL	PRMGET
+	PUSH	IX
+	CALL	SCRCHK		;SCREEN NO CHECK
+	LD	HL,(ACPAGE)	;L = (ACPAGE)
+	CALL	CLYOFF		;CALC Y OFFSET
+	LD	(PARM2+1),A
+	LD	A,(PARM6)	;A =BOX FLAG
+	OR	A
+	JP	Z,LINE		;IF BOX_FLG==0 THEN LINE
+	DEC	A
+	JR	Z,BOX		;IF BOX_FLG==1 THEN BOX
+BOXFIL:	LD	DE,(PARM2)
+	LD	A,(PARM4)
+	SUB	E
+	LD	B,A
+	JR	NC,BOXFL1
+	NEG
+	LD	B,A
+	LD	DE,(PARM4)
+BOXFL1:	LD	A,E
+	INC	B
+BOXFL2:	LD	(PARM2),A	;FOR A=Y TO Y1
+	LD	(PARM4),A	;  LINE(X,A,X1,A,C,B,L)
+	PUSH	AF		;NEXT A
+	PUSH	BC
+	CALL	LINE
+	POP	BC
+	POP	AF
+	INC	A
+	DJNZ	BOXFL2
+	RET
+BOX:	LD	A,(PARM4)
+	LD	H,A
+	LD	A,(PARM2)
+	LD	(PARM4),A
+	PUSH	HL
+	CALL	LINE		;LINE(X,Y,X1,Y,C,B,L)
+	LD	A,(PARM2)
+	LD	H,A
+	POP	AF
+	LD	(PARM2),A
+	LD	(PARM4),A
+	PUSH	HL
+	CALL	LINE		;LINE(X,Y1,X1,Y1,C,B,L)
+	POP	HL
+	LD	A,(PARM4)	;H=Y,A=Y1
+	CP	H		;A(Y1)-H(Y)
+	RET	Z		;IF Y=Y1 THEN RETURN
+	JR	C,BOX1		;IF Y1<Y THEN A=Y1: H=Y
+	LD	L,A		;	 ELSE A=Y:  H=Y1
+	LD	A,H
+	LD	H,L
+BOX1:	INC	A
+	CP	H
+	RET	Z		;IF A+1=H THEN RETURN
+	LD	(PARM2),A
+	LD	A,H
+	DEC	A
+	LD	(PARM4),A
+	LD	DE,(PARM3)
+	LD	HL,(PARM1)
+	LD	(PARM3),HL
+	PUSH	DE
+	CALL	LINE		;LINE(X,Y,X,Y1,C,B,L)
+	POP	HL
+	LD	(PARM1),HL
+	LD	(PARM3),HL	;LINE(X1,Y,X1,Y1,C,B,L)
+LINE:	DI
+	CALL	WAITVDP
+	LD	A,36
+	CALL	SETREG
+	CALL	VDPCMD2		;VDP COMMAND SUB(2)
+	LD	HL,(DOTSX)
+	PUSH	HL
+	LD	A,(DOTSY)
+	LD	E,A
+	LD	D,0
+	OR	A
+	SBC	HL,DE		;IF ABS(X1-X) >= ABS(Y1-Y) THEN
+	POP	HL		;   HL=ABS(X1-X):E=ABS(Y1-Y)
+	JR	NC,LINE3	;ELSE
+	EX	DE,HL		;   HL=ABS(Y1-Y):E=ABS(X1-Y)
+	INC	B		;   ARG = ARG + 1
+LINE3:	OUT	(C),L		;R#40 = Long-LEN(Low) 
+	OUT	(C),H		;R#41 = Long-LEN(Hi)
+	OUT	(C),E		;R#42 = Short-LEN
+	OUT	(C),D		;R#43 = 0
+	LD	A,(PARM5)
+	OUT	(C),A		;R#44 = Color
+	OUT	(C),B		;R#45 = Arg
+	LD	A,(PARM7)
+	AND	0FH
+	OR	70H
+	OUT	(C),A		;R#46 = 70H + Logical Ope
+	EI
+	RET
+
+;-------------------------------------------------------
+;  COPY( FX, FY, FX1, FY1, FP, TX, TY, TP, LOG )
+;-------------------------------------------------------
+_COPY:
+	POP	IX		;IX=RETURN ADDRESS
+	LD	B,9		;B =PARAMETER COUNT
+	CALL	PRMGET
+	PUSH	IX
+	CALL	SCRCHK		;SCREEN NO CHECK
+	PUSH	AF
+	LD	HL,(PARM5)	;L = FROM PAGE
+	CALL	CLYOFF		;CALC Y OFFSET
+	LD	(PARM2+1),A
+	POP	AF
+	LD	HL,(PARM8)	;L = TO PAGE
+	CALL	CLYOFF
+	LD	(PARM7+1),A
+	DI
+	CALL	WAITVDP
+	LD	A,32
+	CALL	SETREG
+	CALL	VDPCMD2		;VDP COMMAND SUB(2)
+	LD	HL,(PARM6)
+	OUT	(C),L		;R#36 = TX(Low)
+	OUT	(C),H		;R#37 = TX(Hi)
+	LD	HL,(PARM7)
+	OUT	(C),L		;R#38 = TY
+	OUT	(C),H		;R#39 = Y OFFSET
+	LD	HL,(DOTSX)
+	INC	HL
+	OUT	(C),L		;R#40 = ABS(FX1-FX)(Low)
+	LD	A,H
+	AND	1
+	OUT	(C),A		;R#41 =   :        (Hi)
+	LD	A,(DOTSY)
+	INC	A
+	OUT	(C),A		;R#42 = ABS(FY1-FY)
+	XOR	A
+	OUT	(C),A		;R#43 = 0
+	OUT	(C),A		;R#44 = DUMMY
+	OUT	(C),B		;R#45 = ARG
+	LD	A,(PARM9)
+	AND	0FH
+	OR	90H
+	OUT	(C),A		;R#46 = 90H + Logical Ope
+	EI
+	RET
+
+;===============================
+;    SUB ROUTINE
+;===============================
+;-----------------------
+;  GET STATUS
+;-----------------------
+GETSTA:
+	LD	BC,(WPORT0)
+	INC	C
+	OUT	(C),A
+	LD	A,8FH
+	OUT	(C),A
+	LD	BC,(RPORT0)
+	INC	C
+	IN	A,(C)
+	RET
+
+;-----------------------
+;  WAIT VDP
+;-----------------------
+WAITVDP:
+	LD	A,2
+	CALL	GETSTA
+	AND	1
+	JR	NZ,WAITVDP
+RSTST0:	XOR	A		;RESET STATUS FLAG
+	CALL	GETSTA
+	LD	(STATFL),A
+	RET
+
+;-------------------------------
+;  SET VDP REGISTER
+;-------------------------------
+SETREG:
+	LD	BC,(WPORT0)
+	INC	C		;C = PORT#1 ADDRESS
+	OUT	(C),A
+	LD	A,80H+17
+	OUT	(C),A		;R#17 = A
+	INC	C
+	INC	C		;C = PORT#3 ADDRESS
+	RET
+
+;-------------------------------
+;  PARAMETER GET SUB
+;-------------------------------
+PRMGET:
+	POP	IY
+	LD	HL,GWORK
+PRMGT1:	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	DJNZ	PRMGT1
+	PUSH	IY
+	RET
+
+;---------------------------------------
+;  SCREEN NO CHECK & CALC Y OFFSET
+;---------------------------------------
+SCRCHK:
+	LD	A,(SCRMOD)	;SCREEN NO CHECK
+	CP	5
+	RET	NC
+	POP	HL		;DROP RETURN ADDRESS
+	RET			;RETURN USER'S PROGRAM
+
+;-----------------------
+;  CALC Y OFFSET
+;-----------------------
+CLYOFF:
+	CP	7
+	LD	A,L
+	RET	C		;IF SCREEN < 7 THEN A = L
+	ADD	A,A		;ELSE               A = L*2
+	RET
+
+;-------------------------------
+;  VDP COMMAND SUB(1)
+;-------------------------------
+VDPCMD1:
+	LD	HL,(PARM1)
+	OUT	(C),L		;(C) = X(Low)
+	OUT	(C),H		;(C) = X(Hi)
+	LD	HL,(PARM2)
+	OUT	(C),L		;(C) = Y
+	OUT	(C),H		;(C) = Y OFFSET
+	RET
+
+;-------------------------------
+;  VDP COMMAND SUB(2)
+;-------------------------------
+VDPCMD2:
+	LD	HL,(PARM3)
+	LD	DE,(PARM1)
+	XOR	A
+	LD	B,A		;ARG = 0
+	SBC	HL,DE
+	JR	NC,VDPCM1
+	CALL	$MCNEG
+	LD	B,4		;ARG = 4
+VDPCM1:	LD	(DOTSX),HL	;(DOTSX) = ABS(X1-X)
+	OUT	(C),E		;(C) = X(Low)
+	OUT	(C),D		;(C) = X(Hi)
+	LD	DE,(PARM2)
+	LD	A,(PARM4)
+	SUB	E
+	JR	NC,VDPCM2
+	NEG
+	SET	3,B		;ARG(3) = ON
+VDPCM2:	LD	(DOTSY),A	;(DOTSY) = ABS(Y1-Y)
+	OUT	(C),E		;(C) = Y
+	OUT	(C),D		;(C) = Y OFFSET
+	RET
+
+;===============================
+;    ROM CALL SUBROUTINE
+;===============================
+;-------------------------------
+;  CALL MAIN ROM
+;-------------------------------
+CALROM:	LD	IY,(EXPTBL-1)
+	CALL	CALSLT
+	EI
+	RET
+
+;-----------------------
+;  CALL SUB ROM
+;-----------------------
+SUBROM:	LD	(0),IX
+	LD	IX,NMI
+	JR	CALROM
+
+;-------------------------------
+;  STACK TOP ROUTINE
+;-------------------------------
+STKSB0:	INC	SP		;DROP NMI RET ADDRESS
+	INC	SP
+STKAD0:	LD	IX,0
+	JP	EXTROM
+SUBEND:
+
+;-----------------------
+;  WORK AREA
+;-----------------------
+RPORT0:	DB	98H			;READ  PORT#0
+WPORT0:	DB	98H			;WRITE PORT#0
+DOTSX:	DS	2
+DOTSY:	DS	1
+GWORK:
+PARM1:	DS	2
+PARM2:	DS	2
+PARM3:	DS	2
+PARM4:	DS	2
+PARM5:	DS	2
+PARM6:	DS	2
+PARM7:	DS	2
+PARM8:	DS	2
+PARM9:	DS	2
+
+;-------------------------------
+;   Table for CP/M,MSX
+;-------------------------------
+INCLUDE MCCPM.TBL
+INCLUDE MCMSX.TBL
+
+	DB	'CLS',0, 0
+	DW	_CLS
+
+	DB	'COLSPR',0, 2
+	DW	_COLSPR
+
+	DB	'SETPAGE',0, 2
+	DW	_SETPAG
+
+	DB	'PUTSPR',0, 5
+	DW	_PUTSPR
+
+	DB	'PSET',0, 4
+	DW	_PSET
+
+	DB	'POINT',0, 2
+	DW	_POINT
+
+	DB	'LINE',0, 7
+	DW	_LINE
+
+	DB	'COPY',0, 9
+	DW	_COPY
+
+	DB	'GPOS',0, 2
+	DW	_GPOS
+
+	DB	'MOUSE',0, 1
+	DW	_MOUSE
+
+	DB	'PALETTE',0, 4
+	DW	_PALETT
+
+	DB	0		;TABLE END CODE
+
+	END	START
+
